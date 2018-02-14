@@ -43,7 +43,7 @@ for users to understand the package.
 
 This is especially problematic for monster packages like
 <https://godoc.org/gopkg.in/olivere/elastic.v6>. This is so huge that Chrome
-has trouble scrolling it sanely.
+has trouble scrolling it smoothly.
 
 And finding anything in it is really difficult. Now, in part, the onus to
 improve this is on the package author. Splitting this one package up into
