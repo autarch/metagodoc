@@ -45,9 +45,9 @@ This is especially problematic for monster packages like
 <https://godoc.org/gopkg.in/olivere/elastic.v6>. This is so huge that Chrome
 has trouble scrolling it sanely.
 
-And finding anything in it is really difficult. Now, in part, that's the fault
-of the package author. Splitting this one package up into multiple packages
-would greatly improve the presentation.
+And finding anything in it is really difficult. Now, in part, the onus to
+improve this is on the package author. Splitting this one package up into
+multiple packages would greatly improve the presentation.
 
 However, it would still be nice to allow package authors more control over the
 presentation of their documentation.
