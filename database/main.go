@@ -34,27 +34,26 @@ var repoMapping = mapping{
 			ESType: "nested",
 			Properties: properties{
 				"url":    field{ESType: "keyword"},
-				"open":   field{ESType: "short"},
-				"closed": field{ESType: "short"},
+				"open":   field{ESType: "long"},
+				"closed": field{ESType: "long"},
 			},
 		},
 		"pull_requests": field{
 			ESType: "nested",
 			Properties: properties{
 				"url":    field{ESType: "keyword"},
-				"open":   field{ESType: "short"},
-				"closed": field{ESType: "short"},
+				"open":   field{ESType: "long"},
+				"closed": field{ESType: "long"},
 			},
 		},
 		"owner":        field{ESType: "keyword"},
 		"created":      field{ESType: "date"},
 		"last_updated": field{ESType: "date"},
 		"last_crawled": field{ESType: "date"},
-		"stars":        field{ESType: "short"},
-		"forks":        field{ESType: "short"},
+		"stars":        field{ESType: "long"},
+		"forks":        field{ESType: "long"},
 		"is_fork":      field{ESType: "boolean"},
 		"status":       field{ESType: "keyword"},
-		"etag":         field{ESType: "keyword"},
 		"about": field{
 			ESType: "nested",
 			Properties: properties{
@@ -64,12 +63,21 @@ var repoMapping = mapping{
 				},
 				"content_type": field{ESType: "keyword"}},
 		},
-		"packages": field{
+		"refs": field{
 			ESType: "nested",
 			Properties: properties{
-				"name":        field{ESType: "keyword"},
-				"import_path": field{ESType: "keyword"},
-				"is_command":  field{ESType: "boolean"},
+				"name":             field{ESType: "keyword"},
+				"is_head":          field{ESType: "boolean"},
+				"last_seen_commit": field{ESType: "keyword"},
+				"packages": field{
+					ESType: "nested",
+					Properties: properties{
+						"name":        field{ESType: "keyword"},
+						"full_name":   field{ESType: "keyword"},
+						"import_path": field{ESType: "keyword"},
+						"is_command":  field{ESType: "boolean"},
+					},
+				},
 			},
 		},
 	},
@@ -122,7 +130,7 @@ func (d database) makeIndices() {
 }
 
 func (d database) makeIndex(m string) string {
-	name := fmt.Sprintf("gopal-%s", m)
+	name := fmt.Sprintf("metagodoc-%s", m)
 
 	exists, err := d.client.IndexExists(name).Do(context.Background())
 	if err != nil {

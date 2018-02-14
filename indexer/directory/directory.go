@@ -4,7 +4,7 @@ import (
 	"log"
 	"regexp"
 
-	"github.com/autarch/gopal/indexer/esmodels"
+	"github.com/autarch/metagodoc/indexer/esmodels"
 )
 
 // File represents a file within a directory. This could contain any sort of

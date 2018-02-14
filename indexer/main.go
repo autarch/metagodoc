@@ -4,7 +4,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/autarch/gopal/indexer/indexer"
+	"github.com/autarch/metagodoc/indexer/indexer"
 )
 
 func main() {
@@ -13,7 +13,7 @@ func main() {
 		log.Fatal("You must set GOPAL_GITHUB_TOKEN")
 	}
 
-	i := indexer.New(token, "/tmp/gopal-cache", trace())
+	i := indexer.New(token, "/home/autarch/.metagodoc-cache", trace())
 	i.IndexAll()
 }
 
