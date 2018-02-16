@@ -8,9 +8,9 @@ import (
 )
 
 func main() {
-	token := os.Getenv("GOPAL_GITHUB_TOKEN")
+	token := os.Getenv("MG_GITHUB_TOKEN")
 	if token == "" {
-		log.Fatal("You must set GOPAL_GITHUB_TOKEN")
+		log.Fatal("You must set MG_GITHUB_TOKEN")
 	}
 
 	i := indexer.New(token, "/home/autarch/.metagodoc-cache", trace())
@@ -18,5 +18,5 @@ func main() {
 }
 
 func trace() bool {
-	return os.Getenv("GOPAL_ELASTIC_TRACE") != ""
+	return os.Getenv("MG_ELASTIC_TRACE") != ""
 }

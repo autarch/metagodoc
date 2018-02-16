@@ -38,10 +38,15 @@ type Ref struct {
 }
 
 type Package struct {
-	Name       string `json:"name"`
-	FullName   string `json:"full_name"`
-	ImportPath string `json:"import_path"`
-	IsCommand  bool   `json:"is_command"`
+	Name         string   `json:"name"`
+	ImportPath   string   `json:"import_path"`
+	IsCommand    bool     `json:"is_command"`
+	Files        []string `json:"files"`
+	TestFiles    []string `json:"test_files"`
+	XTestFiles   []string `json:"x_test_files"`
+	Imports      []string `json:"imports"`
+	TestImports  []string `json:"test_imports"`
+	XTestImports []string `json:"x_test_imports"`
 }
 
 const DateTimeFormat = "2006-01-02T15:04:05"

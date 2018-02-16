@@ -61,20 +61,9 @@ func (idx *Indexer) IndexAll() {
 	}
 }
 
-var skipList map[string]bool = map[string]bool{
-	// A slide deck?
-	// "github.com/GoesToEleven/GolangTraining": true,
-	// "github.com/golang/go":                   true,
-	// "github.com/qiniu/gobook":                true,
-	// // A book.
-	// "github.com/adonovan/gopl.io": true,
-}
-
 func (idx *Indexer) indexRepo(repo *repository.Repository) {
-	log.Printf("Indexing %s", repo.ID)
-
-	if skipList[repo.ID] {
-		log.Print("  is on the skip list")
+	// Repo is being intentionally skipped.
+	if repo == nil {
 		return
 	}
 

@@ -3,16 +3,21 @@ package repository
 import (
 	"context"
 	"fmt"
+	"go/build"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
-	"path"
 	"path/filepath"
 	"regexp"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/autarch/metagodoc/indexer/esmodels"
+
 	"github.com/google/go-github/github"
+	version "github.com/hashicorp/go-version"
 	git "gopkg.in/src-d/go-git.v4"
 	"gopkg.in/src-d/go-git.v4/plumbing"
 	"gopkg.in/src-d/go-git.v4/plumbing/object"
@@ -48,8 +53,8 @@ type Repository struct {
 	clone      *git.Repository
 	head       *plumbing.Reference
 	ctx        context.Context
-
-	isGoCore bool
+	isGoCore   bool
+	cloneRoot  string
 
 	// A unique ID for the repository based on its URL without the scheme. So
 	// for a GitHub repo like "https://github.com/stretchr/testify" this would
@@ -65,30 +70,48 @@ type Repository struct {
 	Status ActivityStatus
 }
 
+var skipList map[string]bool = map[string]bool{
+	// A slide deck?
+	"github.com/GoesToEleven/GolangTraining": true,
+	"github.com/golang/go":                   true,
+	// Contains invalid .go file (no package).
+	"github.com/qiniu/gobook": true,
+	// // A book.
+	"github.com/adonovan/gopl.io": true,
+	"github.com/aws/aws-sdk-go":   true,
+}
+
 func New(ghr *github.Repository, github *github.Client, httpClient *http.Client, cacheRoot string, ctx context.Context) *Repository {
 	id := regexp.MustCompile(`^https?://`).ReplaceAllString(ghr.GetHTMLURL(), "")
-	isGoCore := id == "github.org/golang/go"
+	log.Printf("Indexing %s", id)
+
+	if skipList[id] {
+		log.Print("  is on the skip list")
+		return nil
+	}
+
+	isGoCore := id == "github.com/golang/go"
 	repo := &Repository{
 		Repository: ghr,
 		github:     github,
 		httpClient: httpClient,
 		ctx:        ctx,
 		isGoCore:   isGoCore,
+		cloneRoot:  filepath.Join(cacheRoot, "repos", id),
 		ID:         id,
 		VCS:        Git,
 	}
-	repo.clone, repo.head = repo.getGitRepo(id, ghr.GetCloneURL(), cacheRoot)
+	repo.clone, repo.head = repo.getGitRepo()
 	repo.Status = repo.getStatus()
 	return repo
 }
 
-func (repo *Repository) getGitRepo(id, url, cacheRoot string) (*git.Repository, *plumbing.Reference) {
-	path := filepath.Join(cacheRoot, id)
+func (repo *Repository) getGitRepo() (*git.Repository, *plumbing.Reference) {
 	var c *git.Repository
-	if pathExists(path) {
-		log.Printf("  %s exists at %s - fetching", id, path)
+	if pathExists(repo.cloneRoot) {
+		log.Printf("  %s exists at %s - fetching", repo.ID, repo.cloneRoot)
 		var err error
-		c, err = git.PlainOpen(path)
+		c, err = git.PlainOpen(repo.cloneRoot)
 		if err != nil {
 			log.Panic(err)
 		}
@@ -96,11 +119,12 @@ func (repo *Repository) getGitRepo(id, url, cacheRoot string) (*git.Repository, 
 		if err != nil && err != git.NoErrAlreadyUpToDate {
 			log.Panic(err)
 		}
-
+		// We need to make sure that we're at the HEAD for later operations.
+		checkOutRef(c, nil)
 	} else {
-		log.Printf("  %s does not exist at %s - cloning", id, path)
+		log.Printf("  %s does not exist at %s - cloning", repo.ID, repo.cloneRoot)
 		var err error
-		c, err = git.PlainClone(path, true, &git.CloneOptions{URL: url, Tags: git.AllTags})
+		c, err = git.PlainClone(repo.cloneRoot, false, &git.CloneOptions{URL: repo.GetCloneURL(), Tags: git.AllTags})
 		if err != nil {
 			log.Panic(err)
 		}
@@ -121,6 +145,28 @@ func pathExists(path string) bool {
 		log.Panic(err)
 	}
 	return true
+}
+
+func checkOutRef(c *git.Repository, ref *plumbing.Reference) {
+	wt, err := c.Worktree()
+	if err != nil {
+		log.Panic(err)
+	}
+	err = wt.Clean(&git.CleanOptions{Dir: true})
+	if err != nil {
+		log.Panic(err)
+	}
+	co := &git.CheckoutOptions{Force: true}
+	if ref != nil {
+		log.Printf("Checkout %s", ref.Hash().String())
+		co.Hash = ref.Hash()
+	} else {
+		log.Print("Checkout HEAD")
+	}
+	err = wt.Checkout(co)
+	if err != nil {
+		log.Panic(err)
+	}
 }
 
 // A repository with no commits within the last 2 years will be considered
@@ -278,18 +324,27 @@ func (repo *Repository) getRefs() []*esmodels.Ref {
 		Packages:       repo.getPackages(repo.head),
 	}}
 
-	tags, err := repo.clone.Tags()
+	tagIter, err := repo.clone.Tags()
 	if err != nil {
 		log.Panic(err)
 	}
 
 	var re *regexp.Regexp
 	if repo.isGoCore {
-		re = regexp.MustCompile(`^(go[0-9]+\.[0-9]+[^/]*)$`)
+		re = regexp.MustCompile(`^go[0-9]+(?:\.[0-9]+)*$`)
 	} else {
-		re = regexp.MustCompile(`^v?[0-9]+\.[0-9]+[^/]*$`)
+		re = regexp.MustCompile(`^v?[0-9]+(?:\.[0-9]+)*$`)
 	}
-	err = tags.ForEach(func(ref *plumbing.Reference) error {
+
+	// We want to go through the refs in sorted order. This should reduce
+	// churn in the worktree as checking out versions that are close to each
+	// other should require fewer changes to the files. This should speed up
+	// the overall indexing process.
+	var versions version.Collection
+	tags := make(map[*version.Version]*plumbing.Reference)
+
+	err = tagIter.ForEach(func(ref *plumbing.Reference) error {
+		log.Printf("TAG %s (%s) of type %s", ref.Name().String(), ref.Hash().String(), ref.Type().String())
 		if ref.Type() != plumbing.HashReference {
 			return nil
 		}
@@ -297,18 +352,42 @@ func (repo *Repository) getRefs() []*esmodels.Ref {
 			// log.Printf("  %s does not match", ref.Name().Short())
 			return nil
 		}
-		// log.Printf("  %s matches", ref.Name().Short())
-		r := &esmodels.Ref{
-			Name:           ref.Name().Short(),
-			IsHead:         false,
-			LastSeenCommit: ref.Hash().String(),
-			Packages:       repo.getPackages(ref),
+		if ref == repo.head {
+			return nil
 		}
-		refs = append(refs, r)
+
+		name := ref.Name().Short()
+		if repo.isGoCore {
+			// The version package doesn't like the go core repo's tag names
+			// like "go1.0.1".
+			name = strings.Replace(name, "go", "", 1)
+		}
+		v := version.Must(version.NewVersion(name))
+		versions = append(versions, v)
+		tags[v] = ref
+
 		return nil
 	})
 	if err != nil {
 		log.Panic(err)
+	}
+
+	sort.Sort(versions)
+	i := 0
+	for _, v := range versions {
+		// XXX - temporarily only index 3 tags
+		if i >= 3 {
+			break
+		}
+		i++
+		ref := tags[v]
+		// log.Printf("  %s matches", ref.Name().Short())
+		refs = append(refs, &esmodels.Ref{
+			Name:           ref.Name().Short(),
+			IsHead:         false,
+			LastSeenCommit: ref.Hash().String(),
+			Packages:       repo.getPackages(ref),
+		})
 	}
 
 	return refs
@@ -316,71 +395,101 @@ func (repo *Repository) getRefs() []*esmodels.Ref {
 
 func (repo *Repository) getPackages(ref *plumbing.Reference) []*esmodels.Package {
 	log.Printf("    packages for %s", ref.Name().Short())
+	checkOutRef(repo.clone, ref)
+	return repo.walkTreeForPackages(repo.cloneRoot)
+}
 
-	iter := repo.refToFiles(ref)
-
-	pmap := make(map[string]*esmodels.Package)
-	err := iter.ForEach(func(f *object.File) error {
-		if !regexp.MustCompile(`\.go$`).MatchString(f.Name) {
-			return nil
-		}
-
-		fullName := path.Dir(f.Name)
-		if _, e := pmap[fullName]; e {
-			return nil
-		}
-
-		pmap[fullName] = &esmodels.Package{
-			Name:       path.Base(fullName),
-			FullName:   fullName,
-			ImportPath: path.Join(repo.ID, fullName),
-			IsCommand:  false,
-		}
-
-		return nil
-	})
+func (repo *Repository) walkTreeForPackages(dir string) []*esmodels.Package {
+	files, err := ioutil.ReadDir(dir)
 	if err != nil {
 		log.Panic(err)
 	}
 
-	pkgs := make([]*esmodels.Package, 0)
-	for _, p := range pmap {
-		pkgs = append(pkgs, p)
+	var p *esmodels.Package = nil
+	var pkgs []*esmodels.Package
+
+	for _, f := range files {
+		name := f.Name()
+		path := filepath.Join(dir, name)
+		if f.IsDir() {
+			// There are no packages to index outside of the src/ part of go
+			// core repo.
+			if repo.isGoCore && strings.Index(path, "/src") == -1 {
+				continue
+			}
+			// The core has testdata directories containing go code that
+			// should be ignored.
+			if repo.isGoCore && name == "testdata" {
+				continue
+			}
+			if name == "." || name == "internal" || name == "vendor" || name == ".git" {
+				continue
+			}
+			pkgs = append(pkgs, repo.walkTreeForPackages(path)...)
+		}
+
+		// If we've already seen a .go file in this directory then we've made
+		// the package for the directory.
+		if p != nil {
+			continue
+		}
+
+		if regexp.MustCompile(`\.go$`).MatchString(name) {
+			p = repo.packageForDir(dir)
+		}
+	}
+
+	if p != nil {
+		return append(pkgs, p)
 	}
 	return pkgs
 }
 
-// func (repo *Repository) recurseSubdirectories(pkg *doc.Package, depth int) []*esmodels.Package {
-// 	indent := strings.Repeat("  ", depth)
-// 	log.Printf("%s  looking for subdirectories in %s", indent, pkg.ImportPath)
+// There are paths that contain go code in the golang/go repo that are not
+// organized in valid manner, for example
+// https://github.com/golang/go/tree/master/doc/progs, which contains a bunch
+// of example programs, each with its own package.
+func (repo *Repository) isGoCorePackage(path string) bool {
+	importPath := strings.Replace(path, repo.cloneRoot+"/src", "", 1)
+	return pathFlags[importPath]&packagePath != 0
+}
 
-// 	if len(pkg.Subdirectories) == 0 {
-// 		log.Printf("%s  none found", indent)
-// 		return nil
-// 	}
+func (repo *Repository) packageForDir(dir string) *esmodels.Package {
+	bpkg, err := build.ImportDir(dir, build.ImportComment)
+	if err != nil {
+		// This can happen if the directory contains go code that for some
+		// reason cannot be built. For example, the src/cmd/vet/all/main.go
+		// file in the golang core repo has a "+build ignore" comment in it
+		// that causes it to be ignored, and it's the only go file in that
+		// directory.
+		if _, ok := err.(*build.NoGoError); ok {
+			return nil
+		}
+		log.Panic(err)
+	}
 
-// 	pkgs := make([]*esmodels.Package, 0)
-// 	for _, d := range pkg.Subdirectories {
-// 		if d == "internal" {
-// 			continue
-// 		}
-// 		if d == "vendor" {
-// 			continue
-// 		}
+	// For some reason bpkg.ImportPath is always giving me ".". But what I'm
+	// doing here is really gross. There's got to be a proper way to get this
+	// working.
+	var importPath string
+	if repo.isGoCore {
+		importPath = regexp.MustCompile(`^.+?/src/pkg/`).ReplaceAllLiteralString(dir, "")
+	} else {
+		importPath = regexp.MustCompile(`^.+?/`+repo.ID).ReplaceAllLiteralString(dir, repo.ID)
+	}
 
-// 		log.Printf("%s  found %s", indent, d)
-// 		p, err := doc.Get(repo.ctx, repo.httpClient, filepath.Join(pkg.ImportPath, d), "")
-// 		if err != nil {
-// 			log.Panic(err)
-// 		}
-
-// 		pkgs = append(pkgs, makeEsPackage(p)...)
-// 		sub := repo.recurseSubdirectories(p, depth+1)
-// 		pkgs = append(pkgs, sub...)
-// 	}
-
-// 	return pkgs
-// }
+	return &esmodels.Package{
+		Name:         bpkg.Name,
+		ImportPath:   importPath,
+		IsCommand:    bpkg.IsCommand(),
+		Files:        bpkg.GoFiles,
+		TestFiles:    bpkg.TestGoFiles,
+		XTestFiles:   bpkg.XTestGoFiles,
+		Imports:      bpkg.Imports,
+		TestImports:  bpkg.TestImports,
+		XTestImports: bpkg.XTestImports,
+	}
+}
 
 var statusMap = map[ActivityStatus]string{
 	Active:          "active",
