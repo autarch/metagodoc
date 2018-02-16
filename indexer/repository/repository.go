@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/autarch/metagodoc/indexer/esmodels"
+	"github.com/autarch/metagodoc/esmodels"
 
 	"code.gitea.io/git"
 	"github.com/google/go-github/github"

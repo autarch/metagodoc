@@ -14,6 +14,18 @@
   version = "v1"
 
 [[projects]]
+  branch = "master"
+  name = "github.com/azer/snakecase"
+  packages = ["."]
+  revision = "c818dddafb5c91bd13275f49b08e38a489cbef5f"
+
+[[projects]]
+  name = "github.com/davecgh/go-spew"
+  packages = ["spew"]
+  revision = "346938d642f2ec3594ed81d874461961cd0faa76"
+  version = "v1.1.0"
+
+[[projects]]
   name = "github.com/google/go-github"
   packages = ["github"]
   revision = "e48060a28fac52d0f1cb758bc8b87c07bac4a87d"
@@ -64,9 +76,21 @@
   revision = "645ef00459ed84a119197bfb8d8205042c6df63d"
   version = "v0.8.0"
 
+[[projects]]
+  name = "github.com/pmezard/go-difflib"
+  packages = ["difflib"]
+  revision = "792786c7400a136282c1664665ae0a8db921c6c2"
+  version = "v1.0.0"
+
+[[projects]]
+  branch = "master"
+  name = "github.com/stretchr/testify"
+  packages = ["assert"]
+  revision = "be8372ae8ec5c6daaed3cc28ebf73c54b737c240"
+
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "a7d078a6c1c96994506a78b6aab987c36311635136512ad1e4ebd4ba29a15c85"
+  inputs-digest = "cc89b6687d8ed6ec99ff49b700067a2022f4fc11cd789464889ac02865b36190"
   solver-name = "gps-cdcl"
   solver-version = 1
