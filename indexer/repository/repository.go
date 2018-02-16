@@ -103,7 +103,7 @@ func (repo *Repository) ESModel() *esmodels.Repository {
 	return &esmodels.Repository{
 		Name:         repo.GetName(),
 		FullName:     repo.GetFullName(),
-		VCS:          repo.VCSType,
+		VCS:          string(repo.VCS),
 		Description:  repo.GetDescription(),
 		PrimaryURL:   repo.GetHTMLURL(),
 		Issues:       issues,

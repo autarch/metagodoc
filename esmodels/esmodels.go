@@ -11,6 +11,7 @@ import (
 type Repository struct {
 	Name         string   `json:"name" esType:"keyword"`
 	FullName     string   `json:"full_name" esType:"keyword"`
+	Description  string   `json:"description" esType:"text" esAnalyzer:"english"`
 	VCS          string   `json:"vcs" esType:"keyword"`
 	PrimaryURL   string   `json:"primary_url" esType:"keyword"`
 	Issues       *Tickets `json:"issues"`
@@ -42,7 +43,7 @@ type Ref struct {
 	Name            string     `json:"name" esType:"keyword"`
 	IsDefaultBranch bool       `json:"is_head" esType:"boolean"`
 	RefType         string     `json:"ref_type" esType:"keyword"`
-	LastSeenCommit  string     `json:"last_seen_commit" esType:"date"`
+	LastSeenCommit  string     `json:"last_seen_commit" esType:"keyword"`
 	LastUpdated     string     `json:"last_updated" esType:"date"`
 	Packages        []*Package `json:"packages"`
 }

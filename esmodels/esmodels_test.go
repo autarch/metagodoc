@@ -12,8 +12,12 @@ func TestMappings(t *testing.T) {
 	repository := &Mapping{
 		"repository",
 		Properties{
-			"name":        Field{ESType: "keyword"},
-			"full_name":   Field{ESType: "keyword"},
+			"name":      Field{ESType: "keyword"},
+			"full_name": Field{ESType: "keyword"},
+			"description": Field{
+				ESType:   "text",
+				Analyzer: "english",
+			},
 			"vcs":         Field{ESType: "keyword"},
 			"primary_url": Field{ESType: "keyword"},
 			"issues": Field{
@@ -55,7 +59,7 @@ func TestMappings(t *testing.T) {
 					"name":              Field{ESType: "keyword"},
 					"is_default_branch": Field{ESType: "boolean"},
 					"ref_type":          Field{ESType: "keyword"},
-					"last_seen_commit":  Field{ESType: "date"},
+					"last_seen_commit":  Field{ESType: "keyword"},
 					"last_updated":      Field{ESType: "date"},
 					"packages": Field{
 						ESType: "nested",
