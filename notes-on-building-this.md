@@ -56,3 +56,32 @@ but is only for things which contain go code.
 ## Thought 5
 
 Instead of copying the godoc code I can cannibilize it, at least.
+
+## Problem
+
+Git is a pain.
+
+My first thought was to clone bare repos and use a package that can work with
+repos directly to deal with them. This was intended to save disk space. A bare
+clone be about 70-80% of the size of a regular clone from my testing. This
+adds up over thousands of repos!
+
+However, I realized that the go/* packages all require files on disk. That
+meant I'd have to check out each branch and tag I wanted to index somehow. At
+first, I started cloning my bare repos with `--depth=1` but that ends up using
+more space than just doing a regular clone in the first place (no
+surprise). So I switched to using regular clones and working with them in
+place to check out branches and tags.
+
+I tried a number of different tools for interfacing with git repos. I tried
+for quite some time to get https://gopkg.in/src-d/go-git.v4 working, and got
+most of the way there, but then I'd get very mysterious messages like "object
+not found" for operations like trying to check out a tag. Trying to debug this
+is very challenging unless you understand Git at a very deep level, which I
+don't.
+
+However, I do know how to do all the operations I want using the `git` CLI
+tool. So why not use that? I found https://github.com/go-gitea/git, which is a
+nice wrapper around calling `git `directly. It lets you fall back to calling
+arbitrary commands for anything it doesn't wrap. Perfect!
+

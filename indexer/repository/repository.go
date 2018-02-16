@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"container/list"
 	"context"
 	"fmt"
 	"go/build"
@@ -16,12 +17,9 @@ import (
 
 	"github.com/autarch/metagodoc/indexer/esmodels"
 
+	"code.gitea.io/git"
 	"github.com/google/go-github/github"
 	version "github.com/hashicorp/go-version"
-	git "gopkg.in/src-d/go-git.v4"
-	"gopkg.in/src-d/go-git.v4/plumbing"
-	"gopkg.in/src-d/go-git.v4/plumbing/object"
-	"gopkg.in/src-d/go-git.v4/plumbing/storer"
 )
 
 type ActivityStatus int
@@ -37,13 +35,13 @@ const (
 	Inactive
 )
 
-type VCSType int
+type VCSType string
 
 const (
-	Git VCSType = iota
-	Hg
-	SVN
-	Bzr
+	Git VCSType = "Git"
+	Hg          = "Hg"
+	SVN         = "SVN"
+	Bzr         = "Bzr"
 )
 
 type Repository struct {
@@ -51,7 +49,6 @@ type Repository struct {
 	github     *github.Client
 	httpClient *http.Client
 	clone      *git.Repository
-	head       *plumbing.Reference
 	ctx        context.Context
 	isGoCore   bool
 	cloneRoot  string
@@ -64,10 +61,6 @@ type Repository struct {
 
 	// Version control system: git, hg, bzr, ...
 	VCS VCSType
-
-	// Version control status. Anything but Active will be ignored in search
-	// results by default.
-	Status ActivityStatus
 }
 
 var skipList map[string]bool = map[string]bool{
@@ -101,41 +94,60 @@ func New(ghr *github.Repository, github *github.Client, httpClient *http.Client,
 		ID:         id,
 		VCS:        Git,
 	}
-	repo.clone, repo.head = repo.getGitRepo()
-	repo.Status = repo.getStatus()
+	repo.clone = repo.getGitRepo()
 	return repo
 }
 
-func (repo *Repository) getGitRepo() (*git.Repository, *plumbing.Reference) {
+func (repo *Repository) ESModel() *esmodels.Repository {
+	issues, prs := repo.getIssuesAndPullRequests()
+	return &esmodels.Repository{
+		Name:         repo.GetName(),
+		FullName:     repo.GetFullName(),
+		VCS:          repo.VCSType,
+		Description:  repo.GetDescription(),
+		PrimaryURL:   repo.GetHTMLURL(),
+		Issues:       issues,
+		PullRequests: prs,
+		Owner:        repo.GetOwner().GetLogin(),
+		Created:      repo.GetCreatedAt().UTC().Format(esmodels.DateTimeFormat),
+		LastUpdated:  repo.GetPushedAt().Format(esmodels.DateTimeFormat),
+		LastCrawled:  time.Now().UTC().Format(esmodels.DateTimeFormat),
+		Stars:        repo.GetStargazersCount(),
+		Forks:        repo.GetForksCount(),
+		Status:       repo.getStatus().String(),
+		About:        repo.getReadme(),
+		IsFork:       repo.GetFork(),
+		Refs:         repo.getRefs(),
+	}
+}
+
+func (repo *Repository) getGitRepo() *git.Repository {
 	var c *git.Repository
-	if pathExists(repo.cloneRoot) {
-		log.Printf("  %s exists at %s - fetching", repo.ID, repo.cloneRoot)
-		var err error
-		c, err = git.PlainOpen(repo.cloneRoot)
-		if err != nil {
-			log.Panic(err)
-		}
-		err = c.Fetch(&git.FetchOptions{Tags: git.AllTags})
-		if err != nil && err != git.NoErrAlreadyUpToDate {
-			log.Panic(err)
-		}
-		// We need to make sure that we're at the HEAD for later operations.
-		checkOutRef(c, nil)
-	} else {
+
+	exists := pathExists(repo.cloneRoot)
+	if !exists {
 		log.Printf("  %s does not exist at %s - cloning", repo.ID, repo.cloneRoot)
-		var err error
-		c, err = git.PlainClone(repo.cloneRoot, false, &git.CloneOptions{URL: repo.GetCloneURL(), Tags: git.AllTags})
+		err := git.Clone(repo.GetCloneURL(), repo.cloneRoot, git.CloneRepoOptions{})
 		if err != nil {
 			log.Panic(err)
 		}
 	}
 
-	head, err := c.Head()
+	var err error
+	c, err = git.OpenRepository(repo.cloneRoot)
 	if err != nil {
 		log.Panic(err)
 	}
 
-	return c, head
+	if exists {
+		log.Printf("  %s exists at %s - fetching", repo.ID, repo.cloneRoot)
+		_, err = git.NewCommand("fetch", "--tags").RunInDir(c.Path)
+		if err != nil {
+			log.Panic(err)
+		}
+	}
+
+	return c
 }
 
 func pathExists(path string) bool {
@@ -147,58 +159,31 @@ func pathExists(path string) bool {
 	return true
 }
 
-func checkOutRef(c *git.Repository, ref *plumbing.Reference) {
-	wt, err := c.Worktree()
-	if err != nil {
-		log.Panic(err)
-	}
-	err = wt.Clean(&git.CleanOptions{Dir: true})
-	if err != nil {
-		log.Panic(err)
-	}
-	co := &git.CheckoutOptions{Force: true}
-	if ref != nil {
-		log.Printf("Checkout %s", ref.Hash().String())
-		co.Hash = ref.Hash()
-	} else {
-		log.Print("Checkout HEAD")
-	}
-	err = wt.Checkout(co)
-	if err != nil {
-		log.Panic(err)
-	}
-}
-
 // A repository with no commits within the last 2 years will be considered
 // inactive. But if another active repo imports this one then we will consider
 // this one active.
 const twoYears = 2 * 365 * 24 * time.Hour
 
 func (repo *Repository) getStatus() ActivityStatus {
-	commits, err := repo.clone.Log(&git.LogOptions{})
+	head, err := repo.clone.GetBranchCommit(repo.GetDefaultBranch())
 	if err != nil {
 		log.Panic(err)
 	}
 
-	firstThree := make([]*object.Commit, 0)
-	for c, err := commits.Next(); c != nil; c, err = commits.Next() {
-		if err != nil {
-			log.Panic(err)
-		}
-		firstThree = append(firstThree, c)
-		if len(firstThree) == 3 {
-			break
-		}
-	}
-
-	if time.Now().Sub(firstThree[0].Author.When) > twoYears {
+	if time.Now().Sub(head.Author.When) > twoYears {
 		return NoRecentCommits
 	}
+
+	commits, err := head.CommitsBeforeLimit(2)
+	if err != nil {
+		log.Panic(err)
+	}
+	commits.PushFront(head)
 
 	if repo.GetFork() {
 		if repo.GetPushedAt().Before(repo.GetCreatedAt().Time) {
 			return DeadEndFork
-		} else if repo.isQuickFork(firstThree) {
+		} else if repo.isQuickFork(commits) {
 			return QuickFork
 		}
 	}
@@ -211,12 +196,13 @@ const oneWeek = 7 * 24 * time.Hour
 // isQuickFork reports whether the repository is a "quick fork": it has fewer
 // than 3 commits, all within a week of the repo creation, createdAt.  Commits
 // must be in reverse chronological order by Commit.Committer.Date.
-func (repo *Repository) isQuickFork(firstThree []*object.Commit) bool {
+func (repo *Repository) isQuickFork(firstThree *list.List) bool {
 	oneWeekOld := repo.GetCreatedAt().Add(oneWeek)
 	if oneWeekOld.After(time.Now()) {
 		return false // a newborn baby of a repository
 	}
-	for _, c := range firstThree {
+	for e := firstThree.Front(); e != nil; e = e.Next() {
+		c := e.Value.(*git.Commit)
 		if c.Author.When.After(oneWeekOld) {
 			return false
 		}
@@ -275,14 +261,15 @@ func (repo *Repository) getIssuesAndPullRequests() (*esmodels.Tickets, *esmodels
 }
 
 func (repo *Repository) getReadme() *esmodels.About {
-	files := repo.refToFiles(repo.head)
-	defer files.Close()
+	files, err := ioutil.ReadDir(repo.clone.Path)
+	if err != nil {
+		log.Panic(err)
+	}
 
-	about := &esmodels.About{}
-	err := files.ForEach(func(f *object.File) error {
-		m := regexp.MustCompile(`^README(?:\.(md|txt))`).FindStringSubmatch(f.Name)
+	for _, f := range files {
+		m := regexp.MustCompile(`^README(?:\.(md|txt))`).FindStringSubmatch(f.Name())
 		if m == nil {
-			return nil
+			continue
 		}
 
 		contentType := "text/plain"
@@ -290,41 +277,24 @@ func (repo *Repository) getReadme() *esmodels.About {
 			contentType = "text/markdown"
 		}
 
-		c, err := f.Contents()
+		c, err := ioutil.ReadFile(filepath.Join(repo.clone.Path, f.Name()))
 		if err != nil {
 			log.Panic(err)
 		}
-		about = &esmodels.About{Content: c, ContentType: contentType}
-		return storer.ErrStop
-	})
-	if err != nil {
-		log.Panic(err)
+
+		return &esmodels.About{Content: string(c), ContentType: contentType}
 	}
 
-	return about
-}
-
-func (repo *Repository) refToFiles(ref *plumbing.Reference) *object.FileIter {
-	o, err := repo.clone.CommitObject(ref.Hash())
-	if err != nil {
-		log.Panic(err)
-	}
-	tree, err := o.Tree()
-	if err != nil {
-		log.Panic(err)
-	}
-	return tree.Files()
+	return nil
 }
 
 func (repo *Repository) getRefs() []*esmodels.Ref {
-	refs := []*esmodels.Ref{&esmodels.Ref{
-		Name:           repo.head.Name().Short(),
-		IsHead:         true,
-		LastSeenCommit: repo.head.Hash().String(),
-		Packages:       repo.getPackages(repo.head),
-	}}
+	var refs []*esmodels.Ref
+	for _, b := range repo.allBranches() {
+		refs = append(refs, repo.newRef(b, true))
+	}
 
-	tagIter, err := repo.clone.Tags()
+	tags, err := repo.clone.GetTags()
 	if err != nil {
 		log.Panic(err)
 	}
@@ -341,22 +311,14 @@ func (repo *Repository) getRefs() []*esmodels.Ref {
 	// other should require fewer changes to the files. This should speed up
 	// the overall indexing process.
 	var versions version.Collection
-	tags := make(map[*version.Version]*plumbing.Reference)
-
-	err = tagIter.ForEach(func(ref *plumbing.Reference) error {
-		log.Printf("TAG %s (%s) of type %s", ref.Name().String(), ref.Hash().String(), ref.Type().String())
-		if ref.Type() != plumbing.HashReference {
-			return nil
-		}
-		if !re.MatchString(ref.Name().Short()) {
+	versionTags := make(map[*version.Version]string)
+	for _, tag := range tags {
+		if !re.MatchString(tag) {
 			// log.Printf("  %s does not match", ref.Name().Short())
-			return nil
-		}
-		if ref == repo.head {
-			return nil
+			continue
 		}
 
-		name := ref.Name().Short()
+		name := tag
 		if repo.isGoCore {
 			// The version package doesn't like the go core repo's tag names
 			// like "go1.0.1".
@@ -364,12 +326,7 @@ func (repo *Repository) getRefs() []*esmodels.Ref {
 		}
 		v := version.Must(version.NewVersion(name))
 		versions = append(versions, v)
-		tags[v] = ref
-
-		return nil
-	})
-	if err != nil {
-		log.Panic(err)
+		versionTags[v] = tag
 	}
 
 	sort.Sort(versions)
@@ -380,22 +337,79 @@ func (repo *Repository) getRefs() []*esmodels.Ref {
 			break
 		}
 		i++
-		ref := tags[v]
 		// log.Printf("  %s matches", ref.Name().Short())
-		refs = append(refs, &esmodels.Ref{
-			Name:           ref.Name().Short(),
-			IsHead:         false,
-			LastSeenCommit: ref.Hash().String(),
-			Packages:       repo.getPackages(ref),
-		})
+		refs = append(refs, repo.newRef(versionTags[v], false))
 	}
 
 	return refs
 }
 
-func (repo *Repository) getPackages(ref *plumbing.Reference) []*esmodels.Package {
-	log.Printf("    packages for %s", ref.Name().Short())
-	checkOutRef(repo.clone, ref)
+// Mostly copied from git.Repository.GetBranches, but altered to get remote
+// branches rather than local.
+func (repo *Repository) allBranches() []string {
+	prefix := "refs/remotes/origin/"
+	stdout, err := git.NewCommand("for-each-ref", "--format=%(refname)", prefix).RunInDir(repo.clone.Path)
+	if err != nil {
+		log.Panic(err)
+	}
+
+	refs := strings.Split(stdout, "\n")
+
+	var branches []string
+	// The last item will be an empty string.
+	for _, ref := range refs[:len(refs)-1] {
+		b := strings.TrimPrefix(ref, prefix)
+		if b == "HEAD" {
+			continue
+		}
+		branches = append(branches, b)
+	}
+
+	return branches
+}
+
+func (repo *Repository) newRef(name string, isBranch bool) *esmodels.Ref {
+	log.Printf("   ref = %s", name)
+
+	if isBranch {
+		_, err := git.NewCommand("fetch", "origin", name).RunInDir(repo.clone.Path)
+		if err != nil {
+			log.Panic(err)
+		}
+	}
+
+	coName := name
+	if isBranch {
+		coName = "origin/" + name
+	}
+	// Despite the reference to Branch this works with any name that git can
+	// resolve to a commit.
+	err := git.Checkout(repo.clone.Path, git.CheckoutOptions{Branch: coName})
+	if err != nil {
+		log.Panic(err)
+	}
+
+	c, err := repo.clone.GetCommit("HEAD")
+	if err != nil {
+		log.Panic(err)
+	}
+
+	t := "tag"
+	if isBranch {
+		t = "branch"
+	}
+
+	return &esmodels.Ref{
+		Name:            name,
+		IsDefaultBranch: name == repo.GetDefaultBranch(),
+		RefType:         t,
+		LastSeenCommit:  c.ID.String(),
+		LastUpdated:     c.Author.When.Format(esmodels.DateTimeFormat),
+		Packages:        repo.getPackages(name),
+	}
+}
+
+func (repo *Repository) getPackages(name string) []*esmodels.Package {
 	return repo.walkTreeForPackages(repo.cloneRoot)
 }
 
@@ -440,6 +454,7 @@ func (repo *Repository) walkTreeForPackages(dir string) []*esmodels.Package {
 	}
 
 	if p != nil {
+		log.Printf("      package = %s", p.ImportPath)
 		return append(pkgs, p)
 	}
 	return pkgs
@@ -455,19 +470,6 @@ func (repo *Repository) isGoCorePackage(path string) bool {
 }
 
 func (repo *Repository) packageForDir(dir string) *esmodels.Package {
-	bpkg, err := build.ImportDir(dir, build.ImportComment)
-	if err != nil {
-		// This can happen if the directory contains go code that for some
-		// reason cannot be built. For example, the src/cmd/vet/all/main.go
-		// file in the golang core repo has a "+build ignore" comment in it
-		// that causes it to be ignored, and it's the only go file in that
-		// directory.
-		if _, ok := err.(*build.NoGoError); ok {
-			return nil
-		}
-		log.Panic(err)
-	}
-
 	// For some reason bpkg.ImportPath is always giving me ".". But what I'm
 	// doing here is really gross. There's got to be a proper way to get this
 	// working.
@@ -478,9 +480,26 @@ func (repo *Repository) packageForDir(dir string) *esmodels.Package {
 		importPath = regexp.MustCompile(`^.+?/`+repo.ID).ReplaceAllLiteralString(dir, repo.ID)
 	}
 
+	bpkg, err := build.ImportDir(dir, build.ImportComment)
+	if err != nil {
+		// This can happen if the directory contains go code that for some
+		// reason cannot be built. For example, the src/cmd/vet/all/main.go
+		// file in the golang core repo has a "+build ignore" comment in it
+		// that causes it to be ignored, and it's the only go file in that
+		// directory.
+		if _, ok := err.(*build.NoGoError); ok {
+			return nil
+		}
+		return &esmodels.Package{
+			ImportPath: importPath,
+			Errors:     []string{err.Error()},
+		}
+	}
+
 	return &esmodels.Package{
 		Name:         bpkg.Name,
 		ImportPath:   importPath,
+		Synopsis:     strings.TrimRight(bpkg.Doc, " \t\n\r"),
 		IsCommand:    bpkg.IsCommand(),
 		Files:        bpkg.GoFiles,
 		TestFiles:    bpkg.TestGoFiles,
@@ -505,26 +524,4 @@ func (st ActivityStatus) String() string {
 	}
 	log.Panic("Invalid activity status: %d", st)
 	return ""
-}
-
-func (repo *Repository) ESModel() *esmodels.Repository {
-	issues, prs := repo.getIssuesAndPullRequests()
-	return &esmodels.Repository{
-		Name:         repo.GetName(),
-		FullName:     repo.GetFullName(),
-		Description:  repo.GetDescription(),
-		PrimaryURL:   repo.GetHTMLURL(),
-		Issues:       issues,
-		PullRequests: prs,
-		Owner:        repo.GetOwner().GetLogin(),
-		Created:      repo.GetCreatedAt().UTC().Format(esmodels.DateTimeFormat),
-		LastUpdated:  repo.GetPushedAt().Format(esmodels.DateTimeFormat),
-		LastCrawled:  time.Now().UTC().Format(esmodels.DateTimeFormat),
-		Stars:        repo.GetStargazersCount(),
-		Forks:        repo.GetForksCount(),
-		Status:       repo.Status.String(),
-		About:        repo.getReadme(),
-		IsFork:       repo.GetFork(),
-		Refs:         repo.getRefs(),
-	}
 }
