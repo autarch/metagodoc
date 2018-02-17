@@ -289,10 +289,7 @@ func (repo *Repository) getReadme() *esmodels.About {
 }
 
 func (repo *Repository) getRefs() []*esmodels.Ref {
-	var refs []*esmodels.Ref
-	for _, b := range repo.allBranches() {
-		refs = append(refs, repo.newRef(b, true))
-	}
+	refs := []*esmodels.Ref{repo.newRef(repo.GetDefaultBranch(), true)}
 
 	tags, err := repo.clone.GetTags()
 	if err != nil {
