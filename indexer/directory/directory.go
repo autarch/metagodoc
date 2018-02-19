@@ -1,14 +1,22 @@
+// Package directory is a shim replacement for the gosrc.Directory structure
+// from the gddo. This is used by our copy of the doc package from that
+// project.
 package directory
 
 import (
+	"bytes"
+	"go/build"
+	"io"
+	"io/ioutil"
 	"log"
-	"regexp"
-
-	"github.com/autarch/metagodoc/indexer/esmodels"
+	"os"
+	"path"
+	"path/filepath"
+	"strings"
+	"time"
 )
 
-// File represents a file within a directory. This could contain any sort of
-// content.
+// File represents a file.
 type File struct {
 	// File name with no directory.
 	Name string
@@ -20,72 +28,89 @@ type File struct {
 	BrowseURL string
 }
 
-// Directory describes a directory in a repository. This directory may contain
-// a Go package or it may not.
 type Directory struct {
-	// The local directory to where the directory's contents have been cloned.
-	localRoot string
-
-	// The import path for this directory's package. Note that this can be set
-	// even if the directory does not contain any packages.
+	Path       string
 	ImportPath string
-
-	// Import path of package after resolving go-import meta tags, if any.
-	ResolvedPath string
-
-	// Cache validation tag. This tag is not necessarily an HTTP entity tag.
-	// The tag is "" if there is no meaningful cache validation for the VCS.
-	Etag string
-
-	// Files.
-	Files []*File
-
-	// Subdirectories, not guaranteed to contain Go code.
-	Subdirectories []string
-
-	// Location of directory on version control service website.
-	BrowseURL string
-
-	// Format specifier for link to source line. It must contain one %s (file URL)
-	// followed by one %d (source line number), or be empty string if not available.
-	// Example: "%s#L%d".
-	LineFmt string
-
-	// The directory's README file data, if one exists
-	readme *esmodels.About
+	Files      []*File
 }
 
-func New(localRoot string) *Directory {
-	return &Directory{localRoot}
+func New(dir string, importPath, rootURL string) *Directory {
+	return &Directory{
+		Path:       dir,
+		ImportPath: importPath,
+		Files:      goFiles(dir, rootURL),
+	}
 }
 
-func (d *Directory) HasReadme() bool {
-	return d.Readme().exists
-}
-
-func (d *Directory) Readme() *esmodels.About {
-	if d.readme != nil {
-		return d.readme
+func goFiles(dir, rootURL string) []*File {
+	contents, err := ioutil.ReadDir(dir)
+	if err != nil {
+		log.Panic(err)
 	}
 
-	log.Print("  looking for readme")
-
-	for _, f := range d.Files {
-		m := regexp.MustCompile(`^(?i)README(?:\.(md|txt))`).FindStringSubmatch(f.Name)
-		if m == nil {
+	var files []*File
+	for _, f := range contents {
+		if !isDocFile(f.Name()) {
 			continue
 		}
 
-		t := "text/plain"
-		if m[1] == "md" {
-			t = "text/markdown"
+		c, err := ioutil.ReadFile(filepath.Join(dir, f.Name()))
+		if err != nil {
+			log.Panic(err)
 		}
 
-		d.readme = &esmodels.About{Content: string(f.Data), ContentType: t}
+		url := strings.Join([]string{rootURL, f.Name()}, "/")
+		files = append(files, &File{Name: f.Name(), Data: c, BrowseURL: url})
 	}
-	if d.readme == nil {
-		d.readme = &esmodels.About{}
-	}
+	return files
+}
 
-	return d.readme
+func isDocFile(n string) bool {
+	if strings.HasSuffix(n, ".go") && n[0] != '_' && n[0] != '.' {
+		return true
+	}
+	return false
+}
+
+func (dir *Directory) Import(ctx *build.Context, mode build.ImportMode) (*build.Package, error) {
+	safeCopy := *ctx
+	ctx = &safeCopy
+	ctx.JoinPath = path.Join
+	ctx.IsAbsPath = path.IsAbs
+	ctx.SplitPathList = func(list string) []string { return strings.Split(list, ":") }
+	ctx.IsDir = func(path string) bool { return path == "." }
+	ctx.HasSubdir = func(root, dir string) (rel string, ok bool) { return "", false }
+	ctx.ReadDir = dir.readDir
+	ctx.OpenFile = dir.openFile
+	return ctx.ImportDir(".", mode)
+}
+
+type fileInfo struct{ f *File }
+
+func (fi fileInfo) Name() string       { return fi.f.Name }
+func (fi fileInfo) Size() int64        { return int64(len(fi.f.Data)) }
+func (fi fileInfo) Mode() os.FileMode  { return 0 }
+func (fi fileInfo) ModTime() time.Time { return time.Time{} }
+func (fi fileInfo) IsDir() bool        { return false }
+func (fi fileInfo) Sys() interface{}   { return nil }
+
+func (dir *Directory) readDir(name string) ([]os.FileInfo, error) {
+	if name != "." {
+		return nil, os.ErrNotExist
+	}
+	fis := make([]os.FileInfo, len(dir.Files))
+	for i, f := range dir.Files {
+		fis[i] = fileInfo{f}
+	}
+	return fis, nil
+}
+
+func (dir *Directory) openFile(path string) (io.ReadCloser, error) {
+	name := strings.TrimPrefix(path, "./")
+	for _, f := range dir.Files {
+		if f.Name == name {
+			return ioutil.NopCloser(bytes.NewReader(f.Data)), nil
+		}
+	}
+	return nil, os.ErrNotExist
 }

@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/autarch/metagodoc/esmodels"
+	"github.com/autarch/metagodoc/indexer/repository"
 	"github.com/olivere/elastic"
 )
 
@@ -36,7 +37,11 @@ func New(trace bool) database {
 }
 
 func (d database) makeIndices() {
-	for _, m := range esmodels.Mappings() {
+	mappings := []*esmodels.Mapping{
+		esmodels.MappingForType(repository.ESRepository{}),
+		esmodels.MappingForType(esmodels.Author{}),
+	}
+	for _, m := range mappings {
 		idx := d.makeIndex(m.Name)
 		d.putMapping(idx, m)
 	}

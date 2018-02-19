@@ -4,7 +4,6 @@ import (
 	"container/list"
 	"context"
 	"fmt"
-	"go/build"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -16,6 +15,9 @@ import (
 	"time"
 
 	"github.com/autarch/metagodoc/esmodels"
+	"github.com/autarch/metagodoc/indexer/directory"
+	"github.com/autarch/metagodoc/indexer/doc"
+	"github.com/golang/gddo/gosrc"
 
 	"code.gitea.io/git"
 	"github.com/google/go-github/github"
@@ -98,9 +100,29 @@ func New(ghr *github.Repository, github *github.Client, httpClient *http.Client,
 	return repo
 }
 
-func (repo *Repository) ESModel() *esmodels.Repository {
+type ESRepository struct {
+	Name         string   `json:"name" esType:"keyword"`
+	FullName     string   `json:"full_name" esType:"keyword"`
+	Description  string   `json:"description" esType:"text" esAnalyzer:"english"`
+	VCS          string   `json:"vcs" esType:"keyword"`
+	PrimaryURL   string   `json:"primary_url" esType:"keyword"`
+	Issues       *Tickets `json:"issues"`
+	PullRequests *Tickets `json:"pull_requests"`
+	Owner        string   `json:"owner" esType:"keyword"`
+	Created      string   `json:"created" esType:"date"`
+	LastUpdated  string   `json:"last_updated" esType:"date"`
+	LastCrawled  string   `json:"last_crawled" esType:"date"`
+	Stars        int      `json:"stars" esType:"long"`
+	Forks        int      `json:"forks" esType:"long"`
+	IsFork       bool     `json:"is_fork" esType:"boolean"`
+	Status       string   `json:"status" esType:"keyword"`
+	About        *About   `json:"about""`
+	Refs         []*Ref   `json:"refs"`
+}
+
+func (repo *Repository) ESModel() *ESRepository {
 	issues, prs := repo.getIssuesAndPullRequests()
-	return &esmodels.Repository{
+	return &ESRepository{
 		Name:         repo.GetName(),
 		FullName:     repo.GetFullName(),
 		VCS:          string(repo.VCS),
@@ -213,14 +235,20 @@ func (repo *Repository) isQuickFork(firstThree *list.List) bool {
 	return true
 }
 
-func (repo *Repository) getIssuesAndPullRequests() (*esmodels.Tickets, *esmodels.Tickets) {
-	return &esmodels.Tickets{}, &esmodels.Tickets{}
+type Tickets struct {
+	Url    string `json:"url" esType:"keyword"`
+	Open   int    `json:"open" esType:"long"`
+	Closed int    `json:"closed" esType:"long"`
+}
+
+func (repo *Repository) getIssuesAndPullRequests() (*Tickets, *Tickets) {
+	return &Tickets{}, &Tickets{}
 	log.Print("  getting issues")
 
-	issues := &esmodels.Tickets{
+	issues := &Tickets{
 		Url: fmt.Sprintf("%s/issues", repo.GetHTMLURL()),
 	}
-	prs := &esmodels.Tickets{
+	prs := &Tickets{
 		Url: fmt.Sprintf("%s/pulls", repo.GetHTMLURL()),
 	}
 
@@ -237,7 +265,7 @@ func (repo *Repository) getIssuesAndPullRequests() (*esmodels.Tickets, *esmodels
 		}
 
 		for _, i := range issuesList {
-			var s *esmodels.Tickets
+			var s *Tickets
 			if i.IsPullRequest() {
 				s = prs
 			} else {
@@ -260,14 +288,19 @@ func (repo *Repository) getIssuesAndPullRequests() (*esmodels.Tickets, *esmodels
 	return issues, prs
 }
 
-func (repo *Repository) getReadme() *esmodels.About {
+type About struct {
+	Content     string `json:"content" esType:"text" esAnalyzer:"english"`
+	ContentType string `json:"content_type" esType:"keyword"`
+}
+
+func (repo *Repository) getReadme() *About {
 	files, err := ioutil.ReadDir(repo.clone.Path)
 	if err != nil {
 		log.Panic(err)
 	}
 
 	for _, f := range files {
-		m := regexp.MustCompile(`^README(?:\.(md|txt))`).FindStringSubmatch(f.Name())
+		m := regexp.MustCompile(`(?i)^readme(?:\.(.+))`).FindStringSubmatch(f.Name())
 		if m == nil {
 			continue
 		}
@@ -282,14 +315,23 @@ func (repo *Repository) getReadme() *esmodels.About {
 			log.Panic(err)
 		}
 
-		return &esmodels.About{Content: string(c), ContentType: contentType}
+		return &About{Content: string(c), ContentType: contentType}
 	}
 
 	return nil
 }
 
-func (repo *Repository) getRefs() []*esmodels.Ref {
-	refs := []*esmodels.Ref{repo.newRef(repo.GetDefaultBranch(), true)}
+type Ref struct {
+	Name            string     `json:"name" esType:"keyword"`
+	IsDefaultBranch bool       `json:"is_head" esType:"boolean"`
+	RefType         string     `json:"ref_type" esType:"keyword"`
+	LastSeenCommit  string     `json:"last_seen_commit" esType:"keyword"`
+	LastUpdated     string     `json:"last_updated" esType:"date"`
+	Packages        []*Package `json:"packages"`
+}
+
+func (repo *Repository) getRefs() []*Ref {
+	refs := []*Ref{repo.newRef(repo.GetDefaultBranch(), true)}
 
 	tags, err := repo.clone.GetTags()
 	if err != nil {
@@ -365,7 +407,7 @@ func (repo *Repository) allBranches() []string {
 	return branches
 }
 
-func (repo *Repository) newRef(name string, isBranch bool) *esmodels.Ref {
+func (repo *Repository) newRef(name string, isBranch bool) *Ref {
 	log.Printf("   ref = %s", name)
 
 	if isBranch {
@@ -396,7 +438,7 @@ func (repo *Repository) newRef(name string, isBranch bool) *esmodels.Ref {
 		t = "branch"
 	}
 
-	return &esmodels.Ref{
+	return &Ref{
 		Name:            name,
 		IsDefaultBranch: name == repo.GetDefaultBranch(),
 		RefType:         t,
@@ -406,18 +448,38 @@ func (repo *Repository) newRef(name string, isBranch bool) *esmodels.Ref {
 	}
 }
 
-func (repo *Repository) getPackages(name string) []*esmodels.Package {
-	return repo.walkTreeForPackages(repo.cloneRoot)
+type Package struct {
+	Name         string                 `json:"name" esType:"keyword"`
+	ImportPath   string                 `json:"import_path" esType:"keyword"`
+	Doc          string                 `json:"doc" esType:"text" esAnalyzer:"english"`
+	Synopsis     string                 `json:"synopsis" esType:"text" esAnalyzer:"english"`
+	Errors       []string               `json:"errors" esType:"keyword"`
+	IsCommand    bool                   `json:"is_command" esType:"boolean"`
+	Files        []*doc.File            `json:"files"`
+	TestFiles    []*doc.File            `json:"test_files"`
+	Imports      []string               `json:"imports" esType:"keyword"`
+	TestImports  []string               `json:"test_imports" esType:"keyword"`
+	XTestImports []string               `json:"x_test_imports" esType:"keyword"`
+	Consts       []*doc.Value           `json:"consts"`
+	Funcs        []*doc.Func            `json:"funcs"`
+	Types        []*doc.Type            `json:"types"`
+	Vars         []*doc.Value           `json:"vars"`
+	Examples     []*doc.Example         `json:"examples"`
+	Notes        map[string][]*doc.Note `json:"notes"`
 }
 
-func (repo *Repository) walkTreeForPackages(dir string) []*esmodels.Package {
+func (repo *Repository) getPackages(name string) []*Package {
+	return repo.walkTreeForPackages(repo.cloneRoot, name)
+}
+
+func (repo *Repository) walkTreeForPackages(dir, refName string) []*Package {
 	files, err := ioutil.ReadDir(dir)
 	if err != nil {
 		log.Panic(err)
 	}
 
-	var p *esmodels.Package = nil
-	var pkgs []*esmodels.Package
+	var p *Package = nil
+	var pkgs []*Package
 
 	for _, f := range files {
 		name := f.Name()
@@ -436,7 +498,7 @@ func (repo *Repository) walkTreeForPackages(dir string) []*esmodels.Package {
 			if name == "." || name == "internal" || name == "vendor" || name == ".git" {
 				continue
 			}
-			pkgs = append(pkgs, repo.walkTreeForPackages(path)...)
+			pkgs = append(pkgs, repo.walkTreeForPackages(path, refName)...)
 		}
 
 		// If we've already seen a .go file in this directory then we've made
@@ -446,7 +508,7 @@ func (repo *Repository) walkTreeForPackages(dir string) []*esmodels.Package {
 		}
 
 		if regexp.MustCompile(`\.go$`).MatchString(name) {
-			p = repo.packageForDir(dir)
+			p = repo.packageForDir(dir, refName)
 		}
 	}
 
@@ -466,44 +528,49 @@ func (repo *Repository) isGoCorePackage(path string) bool {
 	return pathFlags[importPath]&packagePath != 0
 }
 
-func (repo *Repository) packageForDir(dir string) *esmodels.Package {
+func (repo *Repository) packageForDir(d, refName string) *Package {
 	// For some reason bpkg.ImportPath is always giving me ".". But what I'm
 	// doing here is really gross. There's got to be a proper way to get this
 	// working.
 	var importPath string
 	if repo.isGoCore {
-		importPath = regexp.MustCompile(`^.+?/src/pkg/`).ReplaceAllLiteralString(dir, "")
+		importPath = regexp.MustCompile(`^.+?/src/pkg/`).ReplaceAllLiteralString(d, "")
 	} else {
-		importPath = regexp.MustCompile(`^.+?/`+repo.ID).ReplaceAllLiteralString(dir, repo.ID)
+		importPath = regexp.MustCompile(`^.+?/`+repo.ID).ReplaceAllLiteralString(d, repo.ID)
 	}
 
-	bpkg, err := build.ImportDir(dir, build.ImportComment)
+	pathInRepo := regexp.MustCompile(`^.+?/`+repo.ID).ReplaceAllLiteralString(d, "")
+	browseURL := fmt.Sprintf("%s/tree/%s%s", repo.GetHTMLURL(), refName, pathInRepo)
+	dir := directory.New(d, importPath, browseURL)
+	pkg, err := doc.NewPackage(dir)
 	if err != nil {
-		// This can happen if the directory contains go code that for some
-		// reason cannot be built. For example, the src/cmd/vet/all/main.go
-		// file in the golang core repo has a "+build ignore" comment in it
-		// that causes it to be ignored, and it's the only go file in that
-		// directory.
-		if _, ok := err.(*build.NoGoError); ok {
+		// If this is true it means that this packages lives at a different
+		// canonical URL. This can happen when a package has a GitHub repo but
+		// you should import it via gopkg.in or some other host.
+		if _, ok := err.(gosrc.NotFoundError); ok {
 			return nil
 		}
-		return &esmodels.Package{
-			ImportPath: importPath,
-			Errors:     []string{err.Error()},
-		}
+		log.Panic(err)
 	}
 
-	return &esmodels.Package{
-		Name:         bpkg.Name,
+	return &Package{
+		Name:         pkg.Name,
 		ImportPath:   importPath,
-		Synopsis:     strings.TrimRight(bpkg.Doc, " \t\n\r"),
-		IsCommand:    bpkg.IsCommand(),
-		Files:        bpkg.GoFiles,
-		TestFiles:    bpkg.TestGoFiles,
-		XTestFiles:   bpkg.XTestGoFiles,
-		Imports:      bpkg.Imports,
-		TestImports:  bpkg.TestImports,
-		XTestImports: bpkg.XTestImports,
+		Doc:          pkg.Doc,
+		Synopsis:     pkg.Synopsis,
+		Errors:       pkg.Errors,
+		IsCommand:    pkg.IsCmd,
+		Files:        pkg.Files,
+		TestFiles:    pkg.TestFiles,
+		Imports:      pkg.Imports,
+		TestImports:  pkg.TestImports,
+		XTestImports: pkg.XTestImports,
+		Consts:       pkg.Consts,
+		Funcs:        pkg.Funcs,
+		Types:        pkg.Types,
+		Vars:         pkg.Vars,
+		Examples:     pkg.Examples,
+		Notes:        pkg.Notes,
 	}
 }
 
