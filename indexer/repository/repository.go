@@ -236,7 +236,7 @@ func (repo *Repository) isQuickFork(firstThree *list.List) bool {
 }
 
 type Tickets struct {
-	Url    string `json:"url" esType:"keyword"`
+	URL    string `json:"url" esType:"keyword"`
 	Open   int    `json:"open" esType:"long"`
 	Closed int    `json:"closed" esType:"long"`
 }
@@ -245,10 +245,10 @@ func (repo *Repository) getIssuesAndPullRequests() (*Tickets, *Tickets) {
 	log.Print("  getting issues")
 
 	issues := &Tickets{
-		Url: fmt.Sprintf("%s/issues", repo.GetHTMLURL()),
+		URL: fmt.Sprintf("%s/issues", repo.GetHTMLURL()),
 	}
 	prs := &Tickets{
-		Url: fmt.Sprintf("%s/pulls", repo.GetHTMLURL()),
+		URL: fmt.Sprintf("%s/pulls", repo.GetHTMLURL()),
 	}
 
 	opts := &github.IssueListByRepoOptions{State: "all"}
