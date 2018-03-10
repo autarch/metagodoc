@@ -1,0 +1,406 @@
+swagger: "2.0"
+info:
+  title: MetaGodoc API
+  version: 0.0.1
+schemes:
+  - http
+produces:
+  - application/org.metagodoc.v1+json
+paths:
+  /repository/{repository}:
+    get:
+      parameters:
+        - type: string
+          name: repository
+          in: path
+          required: true
+      responses:
+        200:
+          description: OK
+          schema:
+            $ref: "#/definitions/repository"
+        default:
+          description: error
+          schema:
+            $ref: "#/definitions/error"
+  /repository/{repository}/ref/{ref}:
+    get:
+      parameters:
+        - type: string
+          name: repository
+          in: path
+          required: true
+        - type: string
+          name: ref
+          in: path
+          required: true
+      responses:
+        200:
+          description: OK
+          schema:
+            $ref: "#/definitions/ref"
+        default:
+          description: error
+          schema:
+            $ref: "#/definitions/error"
+  /repository/{repository}/ref/{ref}/package/{package}:
+    get:
+      parameters:
+        - type: string
+          name: repository
+          in: path
+          required: true
+        - type: string
+          name: ref
+          in: path
+          required: true
+        - type: string
+          name: package
+          in: path
+          required: true
+      responses:
+        200:
+          description: OK
+          schema:
+            $ref: "#/definitions/package"
+        default:
+          description: error
+          schema:
+            $ref: "#/definitions/error"
+  /search:
+    get:
+      parameters:
+        - type: string
+          name: q
+          in: query
+          required: true
+      responses:
+        200:
+          description: OK
+          schema:
+            type: array
+            items:
+              $ref: "#/definitions/search_result"
+        default:
+          description: error
+          schema:
+            $ref: "#/definitions/error"
+definitions:
+  repository:
+    type: object
+    properties:
+      name:
+        type: string
+      full_name:
+        type: string
+      description:
+        type: string
+      vcs:
+        type: string
+        enum:
+          - bzr
+          - git
+          - hg
+          - svn
+      primary_url:
+        type: string
+        format: uri
+      issues:
+        $ref: "#/definitions/issues"
+      pull_requests:
+        $ref: "#/definitions/issues"
+      owner:
+        type: string
+      created:
+        type: string
+        format: date-time
+      last_updated:
+        type: string
+        format: date-time
+      last_crawled:
+        type: string
+        format: date-time
+      stars:
+        type: integer
+        format: int64
+      forks:
+        type: integer
+        format: int64
+      status:
+        type: string
+        enum:
+          - "active"
+          - "dead-end-fork"
+          - "quick-fork"
+          - "no-recent-commits"
+          - "inactive"
+      about:
+        type: object
+        properties:
+          content:
+            type: string
+          content_type:
+            type: string
+      refs:
+        type: array
+        items:
+          type: object
+          properties:
+            name:
+              type: string
+            is_default_branch:
+              type: boolean
+            ref_type:
+              type: string
+              enum:
+                - branch
+                - tag
+  issues:
+    type: object
+    properties:
+      url:
+        type: string
+        format: uri
+      open:
+        type: integer
+        format: int64
+      closed:
+        type: integer
+        format: int64
+  ref:
+    type: object
+    properties:
+      repository:
+        type: string
+      name:
+        type: string
+      is_default_branch:
+        type: boolean
+      ref_type:
+        type: string
+        enum:
+          - branch
+          - tag
+      last_seen_commit:
+        type: string
+        format: date-time
+      last_updated:
+        type: string
+        format: date-time
+      packages:
+        type: array
+        items:
+          $ref: "#/definitions/package"
+  package:
+    type: object
+    properties:
+      repository:
+        type: string
+      ref:
+        type: string
+      name:
+        type: string
+      import_path:
+        type: string
+      doc:
+        type: string
+      synopsis:
+        type: string
+      errors:
+        type: array
+        items:
+          type: string
+      is_command:
+        type: boolean
+      files:
+        type: array
+        items:
+          $ref: "#/definitions/file"
+      imports:
+        type: array
+        items:
+          type: string
+      test_imports:
+        type: array
+        items:
+          type: string
+      x_test_imports:
+        type: array
+        items:
+          type: string
+      consts:
+        type: array
+        items:
+          $ref: "#/definitions/value"
+      funcs:
+        type: array
+        items:
+          $ref: "#/definitions/func"
+      types:
+        type: array
+        items:
+          $ref: "#/definitions/type"
+      vars:
+        type: array
+        items:
+          $ref: "#/definitions/value"
+      examples:
+        type: array
+        items:
+          $ref: "#/definitions/example"
+  file:
+    type: object
+    properties:
+      name:
+        type: string
+      url:
+        type: string
+        format: uri
+  value:
+    type: object
+    properties:
+      decl:
+        $ref: "#/definitions/code"
+      pos:
+        $ref: "#/definitions/pos"
+      doc:
+        type: string
+  func:
+    type: object
+    properties:
+      decl:
+        $ref: "#/definitions/code"
+      pos:
+        $ref: "#/definitions/pos"
+      doc:
+        type: string
+      name:
+        type: string
+      recv:
+        type: string
+      orig:
+        type: string
+      examples:
+        type: array
+        items:
+          $ref: "#/definitions/example"
+  type:
+    type: object
+    properties:
+      doc:
+        type: string
+      name:
+        type: string
+      decl:
+        $ref: "#/definitions/code"
+      pos:
+        $ref: "#/definitions/pos"
+      consts:
+        type: array
+        items:
+          $ref: "#/definitions/value"
+      vars:
+        type: array
+        items:
+          $ref: "#/definitions/value"
+      funcs:
+        type: array
+        items:
+          $ref: "#/definitions/func"
+      methods:
+        type: array
+        items:
+          $ref: "#/definitions/func"
+      examples:
+        type: array
+        items:
+          $ref: "#/definitions/example"
+  example:
+    type: object
+    properties:
+      name:
+        type: string
+      doc:
+        type: string
+      code:
+        $ref: "#/definitions/code"
+      play:
+        type: string
+      output:
+        type: string
+  code:
+    type: object
+    properties:
+      text:
+        type: string
+      annotations:
+        type: array
+        items:
+          $ref: "#/definitions/annotation"
+      paths:
+        type: array
+        items:
+          type: string
+  annotation:
+    type: object
+    properties:
+      pos:
+        type: integer
+        format: int32
+      end:
+        type: integer
+        format: int32
+      kind:
+        type: string
+        enum:
+          - link
+          - anchor
+          - comment
+          - package-link
+          - builtin
+      path_index:
+        type: integer
+        format: int16
+  pos:
+    type: object
+    properties:
+      line:
+        type: integer
+        format: int32
+      "n":
+        type: integer
+        format: uint16
+      file:
+        type: integer
+        format: int16
+  search_result:
+    type: object
+    properties:
+      results:
+        type: array
+        items:
+          type: object
+          properties:
+            item_type:
+              type: string
+              enum:
+                - repository
+                - package
+            url:
+              type: string
+              format: uri
+            repository:
+              $ref: "#/definitions/repository"
+            package:
+              $ref: "#/definitions/package"
+            weight:
+              type: integer
+              format: int64
+  error:
+    type: object
+    properties:
+      message:
+        type: string
+      status:
+        type: integer
+        format: uint16
