@@ -242,7 +242,6 @@ type Tickets struct {
 }
 
 func (repo *Repository) getIssuesAndPullRequests() (*Tickets, *Tickets) {
-	return &Tickets{}, &Tickets{}
 	log.Print("  getting issues")
 
 	issues := &Tickets{
@@ -252,7 +251,7 @@ func (repo *Repository) getIssuesAndPullRequests() (*Tickets, *Tickets) {
 		Url: fmt.Sprintf("%s/pulls", repo.GetHTMLURL()),
 	}
 
-	opts := &github.IssueListByRepoOptions{}
+	opts := &github.IssueListByRepoOptions{State: "all"}
 	for {
 		issuesList, resp, err := repo.github.Issues.ListByRepo(
 			repo.ctx,
@@ -271,10 +270,10 @@ func (repo *Repository) getIssuesAndPullRequests() (*Tickets, *Tickets) {
 			} else {
 				s = issues
 			}
-			if i.GetClosedAt != nil {
-				s.Closed++
-			} else {
+			if i.GetClosedAt().IsZero() {
 				s.Open++
+			} else {
+				s.Closed++
 			}
 		}
 
