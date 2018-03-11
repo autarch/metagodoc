@@ -1,0 +1,29 @@
+version: 2
+jobs:
+  build:
+    docker:
+      - image: circleci/golang:1.10
+      - image: circleci/elasticsearch
+    working_directory: /go/src/github.com/{{ORG_NAME}}/{{REPO_NAME}}
+    steps:
+      - checkout
+
+      - run:
+          name: Apt install tools
+          command: sudo apt-get update -qq && sudo apt-get install -y jq
+
+      - run:
+          name: Install dev tools
+          command: ./dev/bin/install-dev-tools.sh
+
+      - run:
+          name: Gometalinter
+          command: ./dev/bin/run-gometalinter-helper.sh
+
+      - run:
+          name: Run gometalinter
+          command: ./dev/bin/run-gometalinter-helper.sh -all
+
+      - run:
+          name: Go build
+          command: go build ./...
