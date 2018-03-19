@@ -4,64 +4,194 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net/http"
 	"net/url"
 	"os"
+	"sort"
+	"time"
 
+	"github.com/autarch/metagodoc/indexer/crawler"
 	"github.com/autarch/metagodoc/indexer/repository"
-	"github.com/google/go-github/github"
+	"github.com/autarch/metagodoc/logger"
+	"github.com/hako/durafmt"
+	"github.com/hashicorp/errwrap"
 	"github.com/olivere/elastic"
 )
 
-type Indexer struct {
-	elastic    *elastic.Client
-	github     *github.Client
-	httpClient *http.Client
-	cacheRoot  string
-	ctx        context.Context
+type NewParams struct {
+	GitHubToken  string
+	CacheRoot    string
+	TraceElastic bool
 }
 
-func New(token string, cacheRoot string, trace bool) *Indexer {
-	log.Print("Starting ...")
+type crawlers struct {
+	available []crawler.Crawler
+	sleeping  map[crawler.Crawler]time.Time
+}
+
+type Indexer struct {
+	l           *log.Logger
+	elastic     *elastic.Client
+	cacheRoot   string
+	githubToken string
+	crawlers    crawlers
+	ctx         context.Context
+	err         error
+}
+
+func New(p NewParams) *Indexer {
+	l := logger.New("Indexer", true)
 
 	funcs := []elastic.ClientOptionFunc{}
-	if trace {
-		funcs = append(funcs, elastic.SetTraceLog(log.New(os.Stdout, "ES: ", 0)))
+	if p.TraceElastic {
+		t := logger.New("Elasticsearch", false)
+		funcs = append(funcs, elastic.SetTraceLog(t))
 	}
 
 	el, err := elastic.NewClient(funcs...)
 	if err != nil {
-		log.Panicf("NewClient: %s", err)
+		return &Indexer{err: err}
 	}
 
-	httpClient := &http.Client{Transport: NewGHTransport(token)}
-	return &Indexer{
-		elastic:    el,
-		github:     github.NewClient(httpClient),
-		httpClient: httpClient,
-		cacheRoot:  cacheRoot,
-		ctx:        context.Background(),
-	}
-}
-
-func (idx *Indexer) IndexAll() {
-	log.Print("Search repositories where language=go ...")
-	result, _, err := idx.github.Search.Repositories(idx.ctx, "language=go", &github.SearchOptions{})
+	info, err := os.Stat(p.CacheRoot)
 	if err != nil {
-		log.Panicf("GitHub search: %s", err)
-	}
-	log.Printf("Found %d repositories", *result.Total)
-
-	if *result.Total > 0 {
-		for _, r := range result.Repositories {
-			idx.indexRepo(repository.New(&r, idx.github, idx.httpClient, idx.cacheRoot, idx.ctx))
+		if os.IsNotExist(err) {
+			err = os.MkdirAll(p.CacheRoot, 0755)
+			if err != nil {
+				return &Indexer{err: errwrap.Wrapf(fmt.Sprintf("Could not create %s directory: {{err}}", p.CacheRoot), err)}
+			}
+		} else {
+			return &Indexer{err: errwrap.Wrapf(fmt.Sprintf("Could not stat %s: {{err}}", p.CacheRoot), err)}
 		}
-	} else {
-		log.Print("No repos found")
+	} else if !info.IsDir() {
+		return &Indexer{err: fmt.Errorf("The root that was passed, %s, is not a directory", p.CacheRoot)}
+	}
+
+	c := context.Background()
+	idx := &Indexer{
+		l:           l,
+		elastic:     el,
+		cacheRoot:   p.CacheRoot,
+		githubToken: p.GitHubToken,
+		ctx:         c,
+	}
+
+	idx.setCrawlers()
+
+	return idx
+}
+
+func (idx *Indexer) setCrawlers() {
+	gh, err := crawler.NewGitHubCrawler(idx.cacheRoot, idx.githubToken, idx.ctx)
+	if err != nil {
+		idx.err = err
+		return
+	}
+	idx.crawlers.available = append(idx.crawlers.available, gh)
+}
+
+func (idx *Indexer) IndexAll() error {
+	if idx.err != nil {
+		return idx.err
+	}
+
+	ch := make(chan *crawler.Result)
+	defer close(ch)
+	for true {
+		idx.loop(ch)
+	}
+
+	return nil
+}
+
+func (idx *Indexer) loop(ch chan *crawler.Result) {
+	idx.maybeWakeCrawlers()
+
+	if len(idx.crawlers.available) == 0 {
+		until := idx.untilNextWake()
+		idx.l.Printf("Sleeping for %s", durafmt.Parse(until))
+		time.Sleep(until)
+	}
+
+	available := idx.crawlers.available
+	idx.crawlers.available = []crawler.Crawler{}
+	idx.l.Print("Starting all available crawlers")
+	for _, c := range available {
+		idx.l.Printf("Starting %s crawler", c.Name())
+		go c.CrawlAll(ch)
+	}
+
+	// We want result handling in its own goroutine so we do can wake up
+	// sleeping crawlers on time without waiting for a result from the
+	// channel.
+	go func() {
+		for r := range ch {
+			idx.l.Printf("Got a result from the %s crawler", r.Crawler.Name())
+			if r.Error != nil {
+				if r.Exhausted {
+					idx.putCrawlerToSleep(r.Crawler)
+				} else {
+					idx.l.Printf("%s crawler returned an error: %s", r.Crawler.Name(), r.Error)
+					idx.putCrawlerToSleep(r.Crawler)
+				}
+				continue
+			}
+
+			go idx.indexRepo(r.Repository)
+		}
+	}()
+}
+
+func (idx *Indexer) maybeWakeCrawlers() {
+	now := time.Now()
+	for c, t := range idx.crawlers.sleeping {
+		if t.After(now) {
+			continue
+		}
+		idx.l.Printf("Waking %s crawler", c.Name())
+		delete(idx.crawlers.sleeping, c)
+		idx.crawlers.available = append(idx.crawlers.available, c)
 	}
 }
 
-func (idx *Indexer) indexRepo(repo *repository.Repository) {
+func (idx *Indexer) untilNextWake() time.Duration {
+	var durs []time.Duration
+	now := time.Now()
+	for _, t := range idx.crawlers.sleeping {
+		durs = append(durs, t.Sub(now))
+	}
+
+	// If there are no crawlers sleeping that means all crawlers are currently
+	// available. We will sleep for a minute and then try again.
+	if len(durs) == 0 {
+		return time.Duration(1) * time.Minute
+	}
+
+	sort.Slice(durs, func(i, j int) bool { return durs[i] < durs[j] })
+	return durs[0]
+}
+
+func (idx *Indexer) putCrawlerToSleep(c crawler.Crawler) {
+	dur := c.SleepDuration()
+	wake := time.Now().Add(dur)
+	idx.l.Printf("Putting %s crawler to sleep for %s, will wake at %s",
+		c.Name(),
+		durafmt.Parse(dur),
+		wake.Format("2006-01-02 15:04:05"),
+	)
+
+	var available []crawler.Crawler
+	for _, a := range idx.crawlers.available {
+		if c == a {
+			idx.crawlers.sleeping[a] = wake
+			continue
+		}
+		available = append(available, a)
+	}
+
+	idx.crawlers.available = available
+}
+
+func (idx *Indexer) indexRepo(repo repository.Repository) {
 	// Repo is being intentionally skipped.
 	if repo == nil {
 		return
@@ -71,29 +201,29 @@ func (idx *Indexer) indexRepo(repo *repository.Repository) {
 		Exists().
 		Index("metagodoc-repository").
 		Type("repository").
-		Id(repo.ID).
+		Id(repo.ID()).
 		Do(idx.ctx)
 	if err != nil {
-		log.Panicf("Exists: %s", err)
+		idx.l.Panicf("Exists: %s", err)
 	}
 
-	elURI := fmt.Sprintf("http://localhost:9200/metagodoc-repository/repository/%s", url.PathEscape(repo.ID))
+	elURI := fmt.Sprintf("http://localhost:9200/metagodoc-repository/repository/%s", url.PathEscape(repo.ID()))
 	if exists {
-		log.Printf("  already exists at %s?pretty", elURI)
+		idx.l.Printf("  already exists at %s?pretty", elURI)
 	} else {
-		log.Printf("  did not find any repo where the ID is %s", repo.ID)
+		idx.l.Printf("  did not find any repo where the ID is %s", repo.ID())
 	}
 
 	_, err = idx.elastic.
 		Index().
 		Index("metagodoc-repository").
 		Type("repository").
-		Id(repo.ID).
+		Id(repo.ID()).
 		BodyJson(repo.ESModel()).
 		Do(idx.ctx)
 	if err != nil {
-		log.Panicf("Index: %s", err)
+		idx.l.Panicf("Index: %s", err)
 	}
 
-	log.Printf("  made new repository record at %s?pretty", elURI)
+	idx.l.Printf("  made new repository record at %s?pretty", elURI)
 }

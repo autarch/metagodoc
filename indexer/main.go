@@ -8,15 +8,33 @@ import (
 )
 
 func main() {
-	token := os.Getenv("MG_GITHUB_TOKEN")
-	if token == "" {
-		log.Fatal("You must set MG_GITHUB_TOKEN")
+	err := indexer.New(indexer.NewParams{
+		GitHubToken:  githubToken(),
+		CacheRoot:    root(),
+		TraceElastic: trace(),
+	}).IndexAll()
+
+	if err != nil {
+		log.Printf("Error creating indexer: %s", err)
+		os.Exit(1)
 	}
 
-	i := indexer.New(token, "/home/autarch/.metagodoc-cache", trace())
-	i.IndexAll()
+	os.Exit(0)
+}
+
+func githubToken() string {
+	return os.Getenv("METAGODOC_GITHUB_TOKEN")
+}
+
+func root() string {
+	root := os.Getenv("METAGODOC_ROOT")
+	if root != "" {
+		return root
+	}
+
+	return "/var/cache/metagodoc"
 }
 
 func trace() bool {
-	return os.Getenv("MG_ELASTIC_TRACE") != ""
+	return os.Getenv("METAGODOC_ELASTIC_TRACE") != ""
 }

@@ -142,6 +142,18 @@
 
 [[projects]]
   branch = "master"
+  name = "github.com/hako/durafmt"
+  packages = ["."]
+  revision = "987f93c94e473e74aadc826871e61ae6b3360ebb"
+
+[[projects]]
+  branch = "master"
+  name = "github.com/hashicorp/errwrap"
+  packages = ["."]
+  revision = "7554cd9344cec97297fa6649b055a8c98c2a1e55"
+
+[[projects]]
+  branch = "master"
   name = "github.com/hashicorp/go-version"
   packages = ["."]
   revision = "4fe82ae3040f80a03d04d2cccb5606a626b8e1ee"
@@ -258,6 +270,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "2ab8b7457072422b2ddeb07bfe68c45785df8e4dbf1efda1c282269a25629791"
+  inputs-digest = "f6065d4109b951819366d1e0cbb6a3c9aaa19f1345ab044346afe503c71f5683"
   solver-name = "gps-cdcl"
   solver-version = 1
