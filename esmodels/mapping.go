@@ -9,14 +9,6 @@ import (
 	"github.com/azer/snakecase"
 )
 
-type Author struct {
-	Name         string   `json:"name" esType:"keyword"`
-	PrimaryURL   string   `json:"primary_url" esType:"keyword"`
-	Created      string   `json:"created" esType:"date"`
-	LastUpdated  string   `json:"last_updated" esType:"date"`
-	Repositories []string `json:"name" esType:"keyword"`
-}
-
 const DateTimeFormat = "2006-01-02T15:04:05"
 
 type Mapping struct {

@@ -12,11 +12,12 @@ import (
 	"strings"
 	"time"
 
-	"code.gitea.io/git"
 	"github.com/autarch/metagodoc/esmodels"
 	"github.com/autarch/metagodoc/indexer/directory"
 	"github.com/autarch/metagodoc/indexer/doc"
 	"github.com/autarch/metagodoc/logger"
+
+	"code.gitea.io/git"
 	"github.com/golang/gddo/gosrc"
 	"github.com/google/go-github/github"
 	version "github.com/hashicorp/go-version"
@@ -38,7 +39,7 @@ type githubRepository struct {
 	id string
 
 	// Version control system: git, hg, bzr, ...
-	VCS VCSType
+	VCS esmodels.VCSType
 }
 
 var skipList map[string]bool = map[string]bool{
@@ -80,16 +81,16 @@ func NewGitHubRepository(
 		isGoCore:     isGoCore,
 		cloneRoot:    filepath.Join(cacheRoot, "repos", id),
 		id:           id,
-		VCS:          Git,
+		VCS:          esmodels.Git,
 	}
 	repo.clone = repo.getGitRepo()
 
 	return repo, nil
 }
 
-func (repo *githubRepository) ESModel() *ESRepository {
+func (repo *githubRepository) ESModel() *esmodels.Repository {
 	issues, prs := repo.getIssuesAndPullRequests()
-	return &ESRepository{
+	return &esmodels.Repository{
 		Name:         repo.githubRepo.GetName(),
 		FullName:     repo.githubRepo.GetFullName(),
 		VCS:          string(repo.VCS),
@@ -103,7 +104,7 @@ func (repo *githubRepository) ESModel() *ESRepository {
 		LastCrawled:  time.Now().UTC().Format(esmodels.DateTimeFormat),
 		Stars:        repo.githubRepo.GetStargazersCount(),
 		Forks:        repo.githubRepo.GetForksCount(),
-		Status:       repo.getStatus().String(),
+		Status:       repo.getStatus(),
 		About:        repo.getReadme(),
 		IsFork:       repo.githubRepo.GetFork(),
 		Refs:         repo.getRefs(),
@@ -148,14 +149,14 @@ func (repo *githubRepository) getGitRepo() *git.Repository {
 // this one active.
 const twoYears = 2 * 365 * 24 * time.Hour
 
-func (repo *githubRepository) getStatus() ActivityStatus {
+func (repo *githubRepository) getStatus() esmodels.ActivityStatus {
 	head, err := repo.clone.GetBranchCommit(repo.githubRepo.GetDefaultBranch())
 	if err != nil {
 		repo.l.Panic(err)
 	}
 
 	if time.Now().Sub(head.Author.When) > twoYears {
-		return NoRecentCommits
+		return esmodels.NoRecentCommits
 	}
 
 	commits, err := head.CommitsBeforeLimit(2)
@@ -166,13 +167,13 @@ func (repo *githubRepository) getStatus() ActivityStatus {
 
 	if repo.githubRepo.GetFork() {
 		if repo.githubRepo.GetPushedAt().Before(repo.githubRepo.GetCreatedAt().Time) {
-			return DeadEndFork
+			return esmodels.DeadEndFork
 		} else if repo.isQuickFork(commits) {
-			return QuickFork
+			return esmodels.QuickFork
 		}
 	}
 
-	return Active
+	return esmodels.Active
 }
 
 const oneWeek = 7 * 24 * time.Hour
@@ -197,13 +198,13 @@ func (repo *githubRepository) isQuickFork(firstThree *list.List) bool {
 	return true
 }
 
-func (repo *githubRepository) getIssuesAndPullRequests() (*Tickets, *Tickets) {
+func (repo *githubRepository) getIssuesAndPullRequests() (*esmodels.Tickets, *esmodels.Tickets) {
 	repo.l.Print("  getting issues")
 
-	issues := &Tickets{
+	issues := &esmodels.Tickets{
 		URL: fmt.Sprintf("%s/issues", repo.githubRepo.GetHTMLURL()),
 	}
-	prs := &Tickets{
+	prs := &esmodels.Tickets{
 		URL: fmt.Sprintf("%s/pulls", repo.githubRepo.GetHTMLURL()),
 	}
 
@@ -220,7 +221,7 @@ func (repo *githubRepository) getIssuesAndPullRequests() (*Tickets, *Tickets) {
 		}
 
 		for _, i := range issuesList {
-			var s *Tickets
+			var s *esmodels.Tickets
 			if i.IsPullRequest() {
 				s = prs
 			} else {
@@ -243,7 +244,7 @@ func (repo *githubRepository) getIssuesAndPullRequests() (*Tickets, *Tickets) {
 	return issues, prs
 }
 
-func (repo *githubRepository) getReadme() *About {
+func (repo *githubRepository) getReadme() *esmodels.About {
 	files, err := ioutil.ReadDir(repo.clone.Path)
 	if err != nil {
 		repo.l.Panic(err)
@@ -265,14 +266,14 @@ func (repo *githubRepository) getReadme() *About {
 			repo.l.Panic(err)
 		}
 
-		return &About{Content: string(c), ContentType: contentType}
+		return &esmodels.About{Content: string(c), ContentType: contentType}
 	}
 
 	return nil
 }
 
-func (repo *githubRepository) getRefs() []*Ref {
-	refs := []*Ref{repo.newRef(repo.githubRepo.GetDefaultBranch(), true)}
+func (repo *githubRepository) getRefs() []*esmodels.Ref {
+	refs := []*esmodels.Ref{repo.newRef(repo.githubRepo.GetDefaultBranch(), true)}
 
 	tags, err := repo.clone.GetTags()
 	if err != nil {
@@ -348,7 +349,7 @@ func (repo *githubRepository) allBranches() []string {
 	return branches
 }
 
-func (repo *githubRepository) newRef(name string, isBranch bool) *Ref {
+func (repo *githubRepository) newRef(name string, isBranch bool) *esmodels.Ref {
 	repo.l.Printf("   ref = %s", name)
 
 	if isBranch {
@@ -379,7 +380,7 @@ func (repo *githubRepository) newRef(name string, isBranch bool) *Ref {
 		t = "branch"
 	}
 
-	return &Ref{
+	return &esmodels.Ref{
 		Name:            name,
 		IsDefaultBranch: name == repo.githubRepo.GetDefaultBranch(),
 		RefType:         t,
@@ -389,18 +390,18 @@ func (repo *githubRepository) newRef(name string, isBranch bool) *Ref {
 	}
 }
 
-func (repo *githubRepository) getPackages(name string) []*Package {
+func (repo *githubRepository) getPackages(name string) []*esmodels.Package {
 	return repo.walkTreeForPackages(repo.cloneRoot, name)
 }
 
-func (repo *githubRepository) walkTreeForPackages(dir, refName string) []*Package {
+func (repo *githubRepository) walkTreeForPackages(dir, refName string) []*esmodels.Package {
 	files, err := ioutil.ReadDir(dir)
 	if err != nil {
 		repo.l.Panic(err)
 	}
 
-	var p *Package = nil
-	var pkgs []*Package
+	var p *esmodels.Package = nil
+	var pkgs []*esmodels.Package
 
 	for _, f := range files {
 		name := f.Name()
@@ -449,7 +450,7 @@ func (repo *githubRepository) isGoCorePackage(path string) bool {
 	return pathFlags[importPath]&packagePath != 0
 }
 
-func (repo *githubRepository) packageForDir(d, refName string) *Package {
+func (repo *githubRepository) packageForDir(d, refName string) *esmodels.Package {
 	// For some reason bpkg.ImportPath is always giving me ".". But what I'm
 	// doing here is really gross. There's got to be a proper way to get this
 	// working.
@@ -474,7 +475,7 @@ func (repo *githubRepository) packageForDir(d, refName string) *Package {
 		repo.l.Panic(err)
 	}
 
-	return &Package{
+	return &esmodels.Package{
 		Name:         pkg.Name,
 		ImportPath:   importPath,
 		Doc:          pkg.Doc,
