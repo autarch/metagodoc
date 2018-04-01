@@ -12,13 +12,13 @@ import (
 	"github.com/autarch/metagodoc/logger"
 	"github.com/google/go-github/github"
 	"github.com/hashicorp/errwrap"
+	"golang.org/x/oauth2"
 )
 
 type githubCrawler struct {
 	l             *log.Logger
 	cacheRoot     string
 	github        *github.Client
-	httpClient    *http.Client
 	currentResult *github.RepositoriesSearchResult
 	currentIdx    int
 	nextPage      int
@@ -32,15 +32,22 @@ func NewGitHubCrawler(cacheRoot string, token string, ctx context.Context) (Craw
 
 	l := logger.New("GitHub Crawler", true)
 
-	httpClient := &http.Client{Transport: &githubTransport{token, &http.Transport{}}}
 	return &githubCrawler{
-		l:          l,
-		cacheRoot:  cacheRoot,
-		github:     github.NewClient(httpClient),
-		httpClient: httpClient,
-		nextPage:   1,
-		ctx:        ctx,
+		l:         l,
+		cacheRoot: cacheRoot,
+		github:    githubClient(token),
+		nextPage:  1,
+		ctx:       ctx,
 	}, nil
+}
+
+func githubClient(token string) *github.Client {
+	ctx := context.Background()
+	ts := oauth2.StaticTokenSource(
+		&oauth2.Token{AccessToken: token},
+	)
+	tc := oauth2.NewClient(ctx, ts)
+	return github.NewClient(tc)
 }
 
 type githubTransport struct {
@@ -87,7 +94,6 @@ func (gh *githubCrawler) crawlNextPage(ch chan *Result) bool {
 		ghRepo, err := repository.NewGitHubRepository(
 			&r,
 			gh.github,
-			gh.httpClient,
 			gh.cacheRoot,
 			gh.ctx,
 		)

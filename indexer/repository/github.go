@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
-	"net/http"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -27,7 +26,6 @@ type githubRepository struct {
 	l            *log.Logger
 	githubRepo   *github.Repository
 	githubClient *github.Client
-	httpClient   *http.Client
 	clone        *git.Repository
 	ctx          context.Context
 	isGoCore     bool
@@ -57,7 +55,6 @@ var skipList map[string]bool = map[string]bool{
 func NewGitHubRepository(
 	ghr *github.Repository,
 	github *github.Client,
-	httpClient *http.Client,
 	cacheRoot string,
 	ctx context.Context,
 ) (*githubRepository, error) {
@@ -79,7 +76,6 @@ func NewGitHubRepository(
 		l:            l,
 		githubRepo:   ghr,
 		githubClient: github,
-		httpClient:   httpClient,
 		ctx:          ctx,
 		isGoCore:     isGoCore,
 		cloneRoot:    filepath.Join(cacheRoot, "repos", id),
