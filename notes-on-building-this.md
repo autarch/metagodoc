@@ -85,3 +85,10 @@ tool. So why not use that? I found https://github.com/go-gitea/git, which is a
 nice wrapper around calling `git `directly. It lets you fall back to calling
 arbitrary commands for anything it doesn't wrap. Perfect!
 
+## Aside
+
+I did a bunch of work on my laptop, then pushed to master. Then I came back a
+couple weeks later on my desktop, did a bunch of work and tried to pull. The
+new work had a huge overlap with the old work, but I'd solved the same
+problems differently. Apparently my design process is not a reproducible
+build.
