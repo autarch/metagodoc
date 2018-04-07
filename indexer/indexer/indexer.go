@@ -3,7 +3,6 @@ package indexer
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/url"
 	"os"
 	"sort"
@@ -12,12 +11,14 @@ import (
 	"github.com/autarch/metagodoc/indexer/crawler"
 	"github.com/autarch/metagodoc/indexer/repository"
 	"github.com/autarch/metagodoc/logger"
+
 	"github.com/hako/durafmt"
 	"github.com/hashicorp/errwrap"
 	"github.com/olivere/elastic"
 )
 
 type NewParams struct {
+	Logger       *logger.Logger
 	GitHubToken  string
 	CacheRoot    string
 	TraceElastic bool
@@ -29,7 +30,7 @@ type crawlers struct {
 }
 
 type Indexer struct {
-	l           *log.Logger
+	l           *logger.Logger
 	elastic     *elastic.Client
 	cacheRoot   string
 	githubToken string
@@ -39,12 +40,9 @@ type Indexer struct {
 }
 
 func New(p NewParams) *Indexer {
-	l := logger.New("Indexer", true)
-
 	funcs := []elastic.ClientOptionFunc{}
 	if p.TraceElastic {
-		t := logger.New("Elasticsearch", false)
-		funcs = append(funcs, elastic.SetTraceLog(t))
+		funcs = append(funcs, elastic.SetTraceLog(p.Logger))
 	}
 
 	el, err := elastic.NewClient(funcs...)
@@ -68,7 +66,7 @@ func New(p NewParams) *Indexer {
 
 	c := context.Background()
 	idx := &Indexer{
-		l:           l,
+		l:           p.Logger,
 		elastic:     el,
 		cacheRoot:   p.CacheRoot,
 		githubToken: p.GitHubToken,
@@ -81,7 +79,7 @@ func New(p NewParams) *Indexer {
 }
 
 func (idx *Indexer) setCrawlers() {
-	gh, err := crawler.NewGitHubCrawler(idx.cacheRoot, idx.githubToken, idx.ctx)
+	gh, err := crawler.NewGitHubCrawler(idx.l, idx.cacheRoot, idx.githubToken, idx.ctx)
 	if err != nil {
 		idx.err = err
 		return
@@ -108,29 +106,28 @@ func (idx *Indexer) loop(ch chan *crawler.Result) {
 
 	if len(idx.crawlers.available) == 0 {
 		until := idx.untilNextWake()
-		idx.l.Printf("Sleeping for %s", durafmt.Parse(until))
+		idx.l.Infof("Sleeping for %s", durafmt.Parse(until))
 		time.Sleep(until)
 	}
 
 	available := idx.crawlers.available
 	idx.crawlers.available = []crawler.Crawler{}
-	idx.l.Print("Starting all available crawlers")
+	idx.l.Info("Starting all available crawlers")
 	for _, c := range available {
-		idx.l.Printf("Starting %s crawler", c.Name())
+		idx.l.Infof("Starting %s crawler", c.Name())
 		go c.CrawlAll(ch)
 	}
 
-	// We want result handling in its own goroutine so we do can wake up
-	// sleeping crawlers on time without waiting for a result from the
-	// channel.
+	// We want result handling in its own goroutine so we can wake up sleeping
+	// crawlers on time without waiting for a result from the channel.
 	go func() {
 		for r := range ch {
-			idx.l.Printf("Got a result from the %s crawler", r.Crawler.Name())
+			idx.l.Infof("Got a result from the %s crawler", r.Crawler.Name())
 			if r.Error != nil {
 				if r.Exhausted {
 					idx.putCrawlerToSleep(r.Crawler)
 				} else {
-					idx.l.Printf("%s crawler returned an error: %s", r.Crawler.Name(), r.Error)
+					idx.l.Infof("%s crawler returned an error: %s", r.Crawler.Name(), r.Error)
 					idx.putCrawlerToSleep(r.Crawler)
 				}
 				continue
@@ -147,7 +144,7 @@ func (idx *Indexer) maybeWakeCrawlers() {
 		if t.After(now) {
 			continue
 		}
-		idx.l.Printf("Waking %s crawler", c.Name())
+		idx.l.Infof("Waking %s crawler", c.Name())
 		delete(idx.crawlers.sleeping, c)
 		idx.crawlers.available = append(idx.crawlers.available, c)
 	}
@@ -173,7 +170,7 @@ func (idx *Indexer) untilNextWake() time.Duration {
 func (idx *Indexer) putCrawlerToSleep(c crawler.Crawler) {
 	dur := c.SleepDuration()
 	wake := time.Now().Add(dur)
-	idx.l.Printf("Putting %s crawler to sleep for %s, will wake at %s",
+	idx.l.Infof("Putting %s crawler to sleep for %s, will wake at %s",
 		c.Name(),
 		durafmt.Parse(dur),
 		wake.Format("2006-01-02 15:04:05"),
@@ -209,9 +206,9 @@ func (idx *Indexer) indexRepo(repo repository.Repository) {
 
 	elURI := fmt.Sprintf("http://localhost:9200/metagodoc-repository/repository/%s", url.PathEscape(repo.ID()))
 	if exists {
-		idx.l.Printf("  already exists at %s?pretty", elURI)
+		idx.l.Infof("  already exists at %s?pretty", elURI)
 	} else {
-		idx.l.Printf("  did not find any repo where the ID is %s", repo.ID())
+		idx.l.Infof("  did not find any repo where the ID is %s", repo.ID())
 	}
 
 	_, err = idx.elastic.
@@ -225,5 +222,5 @@ func (idx *Indexer) indexRepo(repo repository.Repository) {
 		idx.l.Panicf("Index: %s", err)
 	}
 
-	idx.l.Printf("  made new repository record at %s?pretty", elURI)
+	idx.l.Infof("  made new repository record at %s?pretty", elURI)
 }

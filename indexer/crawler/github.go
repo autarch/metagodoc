@@ -3,7 +3,6 @@ package crawler
 import (
 	"context"
 	"errors"
-	"log"
 	"net/http"
 	"net/url"
 	"time"
@@ -12,11 +11,12 @@ import (
 	"github.com/autarch/metagodoc/logger"
 	"github.com/google/go-github/github"
 	"github.com/hashicorp/errwrap"
+
 	"golang.org/x/oauth2"
 )
 
 type githubCrawler struct {
-	l             *log.Logger
+	l             *logger.Logger
 	cacheRoot     string
 	github        *github.Client
 	currentResult *github.RepositoriesSearchResult
@@ -25,12 +25,10 @@ type githubCrawler struct {
 	ctx           context.Context
 }
 
-func NewGitHubCrawler(cacheRoot string, token string, ctx context.Context) (Crawler, error) {
+func NewGitHubCrawler(l *logger.Logger, cacheRoot string, token string, ctx context.Context) (Crawler, error) {
 	if token == "" {
 		return nil, errors.New("Cannot crawl GitHub with an access token")
 	}
-
-	l := logger.New("GitHub Crawler", true)
 
 	return &githubCrawler{
 		l:         l,
@@ -91,8 +89,12 @@ func (gh *githubCrawler) crawlNextPage(ch chan *Result) bool {
 	}
 
 	for _, r := range result.Repositories {
+		// If we just pass in &r then the reference will change inside the
+		// githubRepository object as we go through the loop.
+		copy := r
 		ghRepo, err := repository.NewGitHubRepository(
-			&r,
+			gh.l,
+			&copy,
 			gh.github,
 			gh.cacheRoot,
 			gh.ctx,
@@ -113,7 +115,7 @@ func (gh *githubCrawler) newResult(r repository.Repository, err error, ex bool) 
 }
 
 func (gh *githubCrawler) getNextPage() (*github.RepositoriesSearchResult, error) {
-	gh.l.Printf("Searching for repositories where language=go, page %d", gh.nextPage)
+	gh.l.Infof("Searching for repositories where language=go, page %d", gh.nextPage)
 	result, resp, err := gh.github.Search.Repositories(
 		gh.ctx,
 		"language=go",
@@ -124,11 +126,11 @@ func (gh *githubCrawler) getNextPage() (*github.RepositoriesSearchResult, error)
 	}
 
 	if result.GetTotal() == 0 {
-		gh.l.Print("Did not find any GitHub repositories on page %d", gh.nextPage)
+		gh.l.Infof("Did not find any GitHub repositories on page %d", gh.nextPage)
 		return nil, nil
 	}
 
-	gh.l.Printf("Found %d repositories", result.GetTotal())
+	gh.l.Infof("Found %d repositories", result.GetTotal())
 	gh.nextPage = resp.NextPage
 
 	return result, nil

@@ -1,28 +1,35 @@
 package logger
 
 import (
-	"fmt"
-	"log"
-	"os"
-	"strconv"
+	"go.uber.org/zap"
 )
 
 const maxPrefix = 24
 
-func New(prefix string, withFile bool) *log.Logger {
-	flags := log.Ldate | log.Ltime
-	if withFile {
-		flags |= log.Llongfile
-	}
-	if len(prefix) > maxPrefix {
-		prefix = prefix[0 : maxPrefix-1]
-	}
-
-	return log.New(os.Stdout, fmtPrefix(prefix), flags)
+type NewParams struct {
+	IsProd bool
 }
 
-var prefixFmt string = "%-" + strconv.Itoa(maxPrefix) + "s"
+type Logger struct {
+	*zap.SugaredLogger
+}
 
-func fmtPrefix(prefix string) string {
-	return fmt.Sprintf(prefixFmt+": ", prefix)
+func New(p NewParams) (*Logger, error) {
+	var l *zap.Logger
+	var err error
+	if p.IsProd {
+		l, err = zap.NewProduction()
+	} else {
+		l, err = zap.NewDevelopment()
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &Logger{l.Sugar()}, nil
+}
+
+func (l *Logger) Printf(format string, v ...interface{}) {
+	l.Infof(format, v...)
 }

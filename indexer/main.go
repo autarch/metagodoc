@@ -5,18 +5,25 @@ import (
 	"os"
 
 	"github.com/autarch/metagodoc/indexer/indexer"
+	"github.com/autarch/metagodoc/logger"
 )
 
 func main() {
-	err := indexer.New(indexer.NewParams{
+	l, err := logger.New(logger.NewParams{})
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer l.Sync()
+
+	err = indexer.New(indexer.NewParams{
+		Logger:       l,
 		GitHubToken:  githubToken(),
 		CacheRoot:    root(),
 		TraceElastic: trace(),
 	}).IndexAll()
 
 	if err != nil {
-		log.Printf("Error creating indexer: %s", err)
-		os.Exit(1)
+		l.Fatalf("Error creating indexer: %s", err)
 	}
 
 	os.Exit(0)

@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -24,7 +23,7 @@ import (
 )
 
 type githubRepository struct {
-	l            *log.Logger
+	l            *logger.Logger
 	githubRepo   *github.Repository
 	githubClient *github.Client
 	clone        *git.Repository
@@ -54,6 +53,7 @@ var skipList map[string]bool = map[string]bool{
 }
 
 func NewGitHubRepository(
+	l *logger.Logger,
 	ghr *github.Repository,
 	github *github.Client,
 	cacheRoot string,
@@ -62,13 +62,10 @@ func NewGitHubRepository(
 
 	id := regexp.MustCompile(`^https?://`).ReplaceAllString(ghr.GetHTMLURL(), "")
 
-	prefix := regexp.MustCompile(`^github\.com`).ReplaceAllString(id, "@GH")
-	l := logger.New(prefix, true)
-
-	l.Printf("Indexing %s", id)
+	l.Infof("Indexing %s", id)
 
 	if skipList[id] {
-		l.Print("  is on the skip list")
+		l.Info("  is on the skip list")
 		return nil, nil
 	}
 
@@ -120,7 +117,7 @@ func (repo *githubRepository) getGitRepo() *git.Repository {
 
 	exists := pathExists(repo.cloneRoot)
 	if !exists {
-		repo.l.Printf("  %s does not exist at %s - cloning", repo.id, repo.cloneRoot)
+		repo.l.Infof("  %s does not exist at %s - cloning", repo.id, repo.cloneRoot)
 		err := git.Clone(repo.githubRepo.GetCloneURL(), repo.cloneRoot, git.CloneRepoOptions{})
 		if err != nil {
 			repo.l.Panic(err)
@@ -134,7 +131,7 @@ func (repo *githubRepository) getGitRepo() *git.Repository {
 	}
 
 	if exists {
-		repo.l.Printf("  %s exists at %s - fetching", repo.id, repo.cloneRoot)
+		repo.l.Infof("  %s exists at %s - fetching", repo.id, repo.cloneRoot)
 		_, err = git.NewCommand("fetch", "--tags").RunInDir(c.Path)
 		if err != nil {
 			repo.l.Panic(err)
@@ -199,7 +196,7 @@ func (repo *githubRepository) isQuickFork(firstThree *list.List) bool {
 }
 
 func (repo *githubRepository) getIssuesAndPullRequests() (*esmodels.Tickets, *esmodels.Tickets) {
-	repo.l.Print("  getting issues")
+	repo.l.Info("  getting issues")
 
 	issues := &esmodels.Tickets{
 		URL: fmt.Sprintf("%s/issues", repo.githubRepo.GetHTMLURL()),
@@ -295,7 +292,7 @@ func (repo *githubRepository) getRefs() []*esmodels.Ref {
 	versionTags := make(map[*version.Version]string)
 	for _, tag := range tags {
 		if !re.MatchString(tag) {
-			// repo.l.Printf("  %s does not match", ref.Name().Short())
+			// repo.l.Infof("  %s does not match", ref.Name().Short())
 			continue
 		}
 
@@ -318,7 +315,7 @@ func (repo *githubRepository) getRefs() []*esmodels.Ref {
 			break
 		}
 		i++
-		// repo.l.Printf("  %s matches", ref.Name().Short())
+		// repo.l.Infof("  %s matches", ref.Name().Short())
 		refs = append(refs, repo.newRef(versionTags[v], false))
 	}
 
@@ -350,7 +347,7 @@ func (repo *githubRepository) allBranches() []string {
 }
 
 func (repo *githubRepository) newRef(name string, isBranch bool) *esmodels.Ref {
-	repo.l.Printf("   ref = %s", name)
+	repo.l.Infof("   ref = %s", name)
 
 	if isBranch {
 		_, err := git.NewCommand("fetch", "origin", name).RunInDir(repo.clone.Path)
@@ -435,7 +432,7 @@ func (repo *githubRepository) walkTreeForPackages(dir, refName string) []*esmode
 	}
 
 	if p != nil {
-		repo.l.Printf("      package = %s", p.ImportPath)
+		repo.l.Infof("      package = %s", p.ImportPath)
 		return append(pkgs, p)
 	}
 	return pkgs
