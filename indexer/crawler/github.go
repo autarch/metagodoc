@@ -41,9 +41,7 @@ func NewGitHubCrawler(l *logger.Logger, cacheRoot string, token string, ctx cont
 
 func githubClient(token string) *github.Client {
 	ctx := context.Background()
-	ts := oauth2.StaticTokenSource(
-		&oauth2.Token{AccessToken: token},
-	)
+	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
 	tc := oauth2.NewClient(ctx, ts)
 	return github.NewClient(tc)
 }
