@@ -7,11 +7,20 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/go-openapi/loads"
-	flags "github.com/jessevdk/go-flags"
-
+	"github.com/autarch/metagodoc/api/handlers"
 	"github.com/autarch/metagodoc/api/restapi"
 	"github.com/autarch/metagodoc/api/restapi/operations"
+	"github.com/autarch/metagodoc/elc"
+	"github.com/autarch/metagodoc/env"
+	"github.com/autarch/metagodoc/logger"
+
+	"github.com/go-openapi/errors"
+	"github.com/go-openapi/loads"
+	"github.com/go-openapi/runtime"
+	"github.com/go-openapi/runtime/middleware"
+	flags "github.com/jessevdk/go-flags"
+	"github.com/olivere/elastic"
+	"github.com/tylerb/graceful"
 )
 
 func main() {
@@ -20,12 +29,17 @@ func main() {
 		log.Fatalln(err)
 	}
 
+	l, err := logger.New(logger.NewParams{IsProd: env.IsProd()})
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	api := operations.NewMetaGodocAPI(swaggerSpec)
 	server := restapi.NewServer(api)
 	defer server.Shutdown()
 
 	parser := flags.NewParser(server, flags.Default)
-	parser.ShortDescription = "MetaGodoc API"
+	parser.ShortDescription = "MetaGodoc REST API"
 	parser.LongDescription = swaggerSpec.Spec().Info.Description
 
 	server.ConfigureFlags()
@@ -46,14 +60,19 @@ func main() {
 		os.Exit(code)
 	}
 
-	configureAPI(api)
+	el, err := elc.NewClient(env.TraceElastic(), l)
+	if err != nil {
+		log.Fatalln(err)
+	}
+
+	configureAPI(api, l, el)
 
 	if err := server.Serve(); err != nil {
 		log.Fatalln(err)
 	}
 }
 
-func configureAPI(api *operations.MetaGodocAPI) http.Handler {
+func configureAPI(api *operations.MetaGodocAPI, l *logger.Logger, el *elastic.Client) http.Handler {
 	// configure the api here
 	api.ServeError = errors.ServeError
 
@@ -67,8 +86,9 @@ func configureAPI(api *operations.MetaGodocAPI) http.Handler {
 
 	api.JSONProducer = runtime.JSONProducer()
 
+	h := handlers.New(l, el)
 	api.GetRepositoryRepositoryHandler = operations.GetRepositoryRepositoryHandlerFunc(func(params operations.GetRepositoryRepositoryParams) middleware.Responder {
-		return middleware.NotImplemented("operation .GetRepositoryRepository has not yet been implemented")
+		return h.GetRepository(params)
 	})
 	api.GetRepositoryRepositoryRefRefHandler = operations.GetRepositoryRepositoryRefRefHandlerFunc(func(params operations.GetRepositoryRepositoryRefRefParams) middleware.Responder {
 		return middleware.NotImplemented("operation .GetRepositoryRepositoryRefRef has not yet been implemented")

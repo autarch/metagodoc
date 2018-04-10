@@ -1,43 +1,56 @@
-package handler
+package handlers
 
 import (
 	"context"
 	"encoding/json"
 	"log"
-	"time"
 
 	"github.com/autarch/metagodoc/api/models"
 	"github.com/autarch/metagodoc/api/restapi/operations"
 	"github.com/autarch/metagodoc/esmodels"
-	"github.com/autarch/metagodoc/indexer/repository"
+
 	"github.com/go-openapi/runtime/middleware"
 	"github.com/go-openapi/strfmt"
-	"github.com/olivere/elastic"
 )
 
-func GetRepository(params operations.GetRepositoryRepositoryParams) middleware.Responder {
-	el, err := elastic.NewClient()
-	if err != nil {
-		log.Panicf("NewClient: %s", err)
-	}
-
-	result, err := el.Get().
+func (h *handlers) GetRepository(params operations.GetRepositoryRepositoryParams) middleware.Responder {
+	result, err := h.el.Get().
 		Index("metagodoc-repository").
 		Type("repository").
 		Id(params.Repository).
 		Do(context.Background())
 	if err != nil {
-		log.Panicf("Get: %s", err)
+		h.l.Errorf("Elastic get failed: %s", err)
+		return operations.NewGetRepositoryRepositoryDefault(500)
 	}
 
 	if !result.Found {
 		return operations.NewGetRepositoryRepositoryDefault(404)
 	}
 
-	esr := &repository.ESRepository{}
+	esr := &esmodels.Repository{}
 	err = json.Unmarshal(*result.Source, esr)
 	if err != nil {
 		log.Panicf("Unmarshal: %s", err)
+	}
+
+	return h.maybeRepositoryOkResponse(esr)
+}
+
+func (h *handlers) maybeRepositoryOkResponse(esr *esmodels.Repository) middleware.Responder {
+	c, err := h.dt(esr.Created)
+	if err != nil {
+		return operations.NewGetRepositoryRepositoryDefault(500)
+	}
+
+	lc, err := h.dt(esr.LastCrawled)
+	if err != nil {
+		return operations.NewGetRepositoryRepositoryDefault(500)
+	}
+
+	lu, err := h.dt(esr.LastUpdated)
+	if err != nil {
+		return operations.NewGetRepositoryRepositoryDefault(500)
 	}
 
 	return operations.NewGetRepositoryRepositoryOK().WithPayload(
@@ -46,7 +59,7 @@ func GetRepository(params operations.GetRepositoryRepositoryParams) middleware.R
 				Content:     esr.About.Content,
 				ContentType: esr.About.ContentType,
 			},
-			Created:     dt(esr.Created),
+			Created:     *c,
 			Description: esr.Description,
 			Forks:       int64(esr.Forks),
 			FullName:    esr.FullName,
@@ -55,8 +68,8 @@ func GetRepository(params operations.GetRepositoryRepositoryParams) middleware.R
 				Open:   int64(esr.Issues.Open),
 				URL:    strfmt.URI(esr.Issues.URL),
 			},
-			LastCrawled: dt(esr.LastCrawled),
-			LastUpdated: dt(esr.LastUpdated),
+			LastCrawled: *lc,
+			LastUpdated: *lu,
 			Name:        esr.Name,
 			Owner:       esr.Owner,
 			PrimaryURL:  strfmt.URI(esr.PrimaryURL),
@@ -67,28 +80,16 @@ func GetRepository(params operations.GetRepositoryRepositoryParams) middleware.R
 			},
 			Refs:   refItems(esr.Refs),
 			Stars:  int64(esr.Stars),
-			Status: esr.Status,
+			Status: esr.Status.String(),
 			Vcs:    esr.VCS,
 		},
 	)
 }
 
-func dt(val string) strfmt.DateTime {
-	t, err := time.Parse(esmodels.DateTimeFormat, val)
-	if err != nil {
-		log.Panicf("ParseDateTime: %s", err)
-	}
-	return strfmt.DateTime(t)
-}
-
-func refItems(refs []*repository.Ref) []*models.RepositoryRefsItems {
-	var items []*models.RepositoryRefsItems
+func refItems(refs []*esmodels.Ref) []string {
+	var items []string
 	for _, r := range refs {
-		items = append(items, &models.RepositoryRefsItems{
-			Name:            r.Name,
-			IsDefaultBranch: r.IsDefaultBranch,
-			RefType:         r.RefType,
-		})
+		items = append(items, r.Name)
 	}
 	return items
 }
