@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/autarch/metagodoc/doc"
 	"github.com/autarch/metagodoc/esmodels"
 	"github.com/autarch/metagodoc/indexer/directory"
-	"github.com/autarch/metagodoc/indexer/doc"
 	"github.com/autarch/metagodoc/logger"
 
 	"code.gitea.io/git"

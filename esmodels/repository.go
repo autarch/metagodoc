@@ -1,7 +1,7 @@
 package esmodels
 
 import (
-	"github.com/autarch/metagodoc/indexer/doc"
+	"github.com/autarch/metagodoc/doc"
 )
 
 type ActivityStatus string

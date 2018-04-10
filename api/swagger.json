@@ -107,6 +107,32 @@
         }
       }
     },
+    "/author/{author}": {
+      "get": {
+        "parameters": [
+          {
+            "type": "string",
+            "name": "author",
+            "in": "path",
+            "required": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "schema": {
+              "$ref": "#/definitions/author"
+            }
+          },
+          "default": {
+            "description": "error",
+            "schema": {
+              "$ref": "#/definitions/error"
+            }
+          }
+        }
+      }
+    },
     "/search": {
       "get": {
         "parameters": [
@@ -241,9 +267,6 @@
     "ref": {
       "type": "object",
       "properties": {
-        "repository": {
-          "type": "string"
-        },
         "name": {
           "type": "string"
         },
@@ -276,12 +299,6 @@
     "package": {
       "type": "object",
       "properties": {
-        "repository": {
-          "type": "string"
-        },
-        "ref": {
-          "type": "string"
-        },
         "name": {
           "type": "string"
         },
@@ -556,25 +573,53 @@
               "item_type": {
                 "type": "string",
                 "enum": [
-                  "repository",
-                  "package"
+                  "author",
+                  "package",
+                  "repository"
                 ]
               },
               "url": {
                 "type": "string",
                 "format": "uri"
               },
-              "repository": {
-                "$ref": "#/definitions/repository"
+              "author": {
+                "$ref": "#/definitions/author"
               },
               "package": {
                 "$ref": "#/definitions/package"
               },
-              "weight": {
-                "type": "integer",
-                "format": "int64"
+              "repository": {
+                "$ref": "#/definitions/repository"
+              },
+              "score": {
+                "type": "number"
               }
             }
+          }
+        }
+      }
+    },
+    "author": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "primary_url": {
+          "type": "string"
+        },
+        "created": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "last_updated": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "repositories": {
+          "type": "array",
+          "items": {
+            "type": "string"
           }
         }
       }

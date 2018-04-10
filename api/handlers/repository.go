@@ -1,10 +1,6 @@
 package handlers
 
 import (
-	"context"
-	"encoding/json"
-	"log"
-
 	"github.com/autarch/metagodoc/api/models"
 	"github.com/autarch/metagodoc/api/restapi/operations"
 	"github.com/autarch/metagodoc/esmodels"
@@ -14,24 +10,9 @@ import (
 )
 
 func (h *handlers) GetRepository(params operations.GetRepositoryRepositoryParams) middleware.Responder {
-	result, err := h.el.Get().
-		Index("metagodoc-repository").
-		Type("repository").
-		Id(params.Repository).
-		Do(context.Background())
-	if err != nil {
-		h.l.Errorf("Elastic get failed: %s", err)
-		return operations.NewGetRepositoryRepositoryDefault(500)
-	}
-
-	if !result.Found {
-		return operations.NewGetRepositoryRepositoryDefault(404)
-	}
-
-	esr := &esmodels.Repository{}
-	err = json.Unmarshal(*result.Source, esr)
-	if err != nil {
-		log.Panicf("Unmarshal: %s", err)
+	esr, status := h.getRepo(params.Repository)
+	if status != 0 {
+		return operations.NewGetRepositoryRepositoryDefault(status)
 	}
 
 	return h.maybeRepositoryOkResponse(esr)
@@ -78,18 +59,10 @@ func (h *handlers) maybeRepositoryOkResponse(esr *esmodels.Repository) middlewar
 				Open:   int64(esr.PullRequests.Open),
 				URL:    strfmt.URI(esr.PullRequests.URL),
 			},
-			Refs:   refItems(esr.Refs),
+			Refs:   refNames(esr.Refs),
 			Stars:  int64(esr.Stars),
 			Status: esr.Status.String(),
 			Vcs:    esr.VCS,
 		},
 	)
-}
-
-func refItems(refs []*esmodels.Ref) []string {
-	var items []string
-	for _, r := range refs {
-		items = append(items, r.Name)
-	}
-	return items
 }

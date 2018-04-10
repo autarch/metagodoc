@@ -91,7 +91,7 @@ func configureAPI(api *operations.MetaGodocAPI, l *logger.Logger, el *elastic.Cl
 		return h.GetRepository(params)
 	})
 	api.GetRepositoryRepositoryRefRefHandler = operations.GetRepositoryRepositoryRefRefHandlerFunc(func(params operations.GetRepositoryRepositoryRefRefParams) middleware.Responder {
-		return middleware.NotImplemented("operation .GetRepositoryRepositoryRefRef has not yet been implemented")
+		return h.GetRepositoryRef(params)
 	})
 	api.GetRepositoryRepositoryRefRefPackagePackageHandler = operations.GetRepositoryRepositoryRefRefPackagePackageHandlerFunc(func(params operations.GetRepositoryRepositoryRefRefPackagePackageParams) middleware.Responder {
 		return middleware.NotImplemented("operation .GetRepositoryRepositoryRefRefPackagePackage has not yet been implemented")
