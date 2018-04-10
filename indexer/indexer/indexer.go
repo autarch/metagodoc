@@ -40,12 +40,8 @@ type Indexer struct {
 }
 
 func New(p NewParams) *Indexer {
-	funcs := []elastic.ClientOptionFunc{}
-	if p.TraceElastic {
-		funcs = append(funcs, elastic.SetTraceLog(p.Logger))
-	}
+	el, err := elc.NewClient(p.TraceElastic, p.Logger)
 
-	el, err := elastic.NewClient(funcs...)
 	if err != nil {
 		return &Indexer{err: err}
 	}

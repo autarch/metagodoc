@@ -4,12 +4,13 @@ import (
 	"log"
 	"os"
 
+	"github.com/autarch/metagodoc/env"
 	"github.com/autarch/metagodoc/indexer/indexer"
 	"github.com/autarch/metagodoc/logger"
 )
 
 func main() {
-	l, err := logger.New(logger.NewParams{})
+	l, err := logger.New(logger.NewParams{IsProd: env.IsProd()})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -17,9 +18,9 @@ func main() {
 
 	err = indexer.New(indexer.NewParams{
 		Logger:       l,
-		GitHubToken:  githubToken(),
-		CacheRoot:    root(),
-		TraceElastic: trace(),
+		GitHubToken:  env.GitHubToken(),
+		CacheRoot:    env.Root(),
+		TraceElastic: env.TraceElastic(),
 	}).IndexAll()
 
 	if err != nil {
@@ -27,21 +28,4 @@ func main() {
 	}
 
 	os.Exit(0)
-}
-
-func githubToken() string {
-	return os.Getenv("METAGODOC_GITHUB_TOKEN")
-}
-
-func root() string {
-	root := os.Getenv("METAGODOC_ROOT")
-	if root != "" {
-		return root
-	}
-
-	return "/var/cache/metagodoc"
-}
-
-func trace() bool {
-	return os.Getenv("METAGODOC_ELASTIC_TRACE") != ""
 }
