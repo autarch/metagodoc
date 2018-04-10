@@ -17,6 +17,10 @@ const (
 	Inactive = "inactive"
 )
 
+func (as ActivityStatus) String() string {
+	return string(as)
+}
+
 type VCSType string
 
 const (
@@ -25,6 +29,10 @@ const (
 	SVN         = "SVN"
 	Bzr         = "Bzr"
 )
+
+func (vt VCSType) String() string {
+	return string(vt)
+}
 
 type Repository struct {
 	Name         string         `json:"name" esType:"keyword"`
