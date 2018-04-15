@@ -27,7 +27,7 @@ type githubCrawler struct {
 
 func NewGitHubCrawler(l *logger.Logger, cacheRoot string, token string, ctx context.Context) (Crawler, error) {
 	if token == "" {
-		return nil, errors.New("Cannot crawl GitHub with an access token")
+		return nil, errors.New("Cannot crawl GitHub without an access token")
 	}
 
 	return &githubCrawler{
