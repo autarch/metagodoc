@@ -8,6 +8,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/autarch/metagodoc/elc"
 	"github.com/autarch/metagodoc/indexer/crawler"
 	"github.com/autarch/metagodoc/indexer/repository"
 	"github.com/autarch/metagodoc/logger"
